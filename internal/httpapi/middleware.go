@@ -23,7 +23,7 @@ const sessionCookie = "sid"
 
 // chain 组合所有全局中间件。
 func (s *Server) chain(next http.Handler) http.Handler {
-	return s.recoverMW(s.securityHeaders(s.accessLog(s.csrf(next))))
+	return s.recoverMW(s.securityHeaders(s.cors(s.accessLog(s.csrf(next)))))
 }
 
 func (s *Server) recoverMW(next http.Handler) http.Handler {
@@ -95,8 +95,22 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 }
 
 // csrf 校验不安全方法的 Origin/Referer 必须与 Host 同源。
+//
+// 两类例外：
+//  1. 带 Authorization 的请求是纯 web 客户端的令牌调用，第三方页面无法自动携带该头；
+//  2. POST /api/login 是跨域客户端建立会话的唯一入口（此时还没有令牌）。
+//     跨域 fetch 默认不保存响应里的 cookie（客户端也用 credentials: omit），
+//     登录本身又受密码与按 IP 限速保护，不存在“借用户身份写入”的风险。
 func (s *Server) csrf(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/api/login" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		switch r.Method {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
 			next.ServeHTTP(w, r)
@@ -127,27 +141,58 @@ func sameHost(rawURL, host string) bool {
 }
 
 // withAuth 校验会话，把用户放进 context，并做滑动续期。
+//
+// 凭据优先级：Authorization: Bearer（纯 web 客户端）→ sid cookie（同源 Web UI）
+// → ?token=（<img>/<video>/<a download>/EventSource 设不了请求头，仅 GET/HEAD）。
+// 只有 cookie 凭据会重发 Set-Cookie，其余两种不碰浏览器 cookie。
 func (s *Server) withAuth(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		c, err := r.Cookie(sessionCookie)
-		if err != nil || c.Value == "" {
+		token, fromCookie := requestToken(r)
+		if token == "" {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "请先登录")
 			return
 		}
-		u, ok := s.auth.Lookup(c.Value)
+		u, ok := s.auth.Lookup(token)
 		if !ok {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "会话已过期，请重新登录")
 			return
 		}
-		http.SetCookie(w, &http.Cookie{
-			Name: sessionCookie, Value: c.Value, Path: "/",
-			HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
-			Expires: time.Now().Add(s.current().SessionTTL()),
-		})
+		if fromCookie {
+			http.SetCookie(w, &http.Cookie{
+				Name: sessionCookie, Value: token, Path: "/",
+				HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
+				Expires: time.Now().Add(s.current().SessionTTL()),
+			})
+		}
 		ctx := context.WithValue(r.Context(), ctxUser, u)
-		ctx = context.WithValue(ctx, ctxToken, c.Value)
+		ctx = context.WithValue(ctx, ctxToken, token)
 		h(w, r.WithContext(ctx))
 	}
+}
+
+// bearerPrefix 是 Authorization 头里的方案名（RFC 6750 规定大小写不敏感）。
+const bearerPrefix = "bearer "
+
+// requestToken 按优先级取出会话令牌，并说明它是否来自 cookie。
+func requestToken(r *http.Request) (token string, fromCookie bool) {
+	if h := strings.TrimSpace(r.Header.Get("Authorization")); h != "" {
+		if len(h) > len(bearerPrefix) && strings.EqualFold(h[:len(bearerPrefix)], bearerPrefix) {
+			return strings.TrimSpace(h[len(bearerPrefix):]), false
+		}
+		// 其他认证方案不当作会话令牌，直接判为未登录，避免误用。
+		return "", false
+	}
+	if c, err := r.Cookie(sessionCookie); err == nil && c.Value != "" {
+		return c.Value, true
+	}
+	// 查询串令牌只对安全方法开放：媒体要能直接放进 <img>/<video>，SSE 要能用
+	// EventSource，两者都设不了请求头。写操作仍必须走 Authorization 或 cookie。
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		if tok := r.URL.Query().Get("token"); tok != "" {
+			return tok, false
+		}
+	}
+	return "", false
 }
 
 // withAdmin 在 withAuth 基础上要求管理员。

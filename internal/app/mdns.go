@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"crypto/sha256"
@@ -13,20 +13,21 @@ import (
 	"lanbox/internal/mdns"
 )
 
-// mdnsRunner 负责通告器的启动、热更与状态适配。
-type mdnsRunner struct {
-	log *log.Logger
+// MDNSRunner 负责通告器的启动、热更与状态适配。
+type MDNSRunner struct {
+	Log      *log.Logger
+	CertPath string
 
 	mu       sync.Mutex
 	r        *mdns.Responder
-	certPath string
 	lastErr  string
 	instance string
 	host     string
 	addrs    []string
 }
 
-func (m *mdnsRunner) apply(cfg config.Config) {
+// Apply 按配置（重新）发布 mDNS 通告。
+func (m *MDNSRunner) Apply(cfg config.Config) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !cfg.MDNS.Enabled {
@@ -52,20 +53,20 @@ func (m *mdnsRunner) apply(cfg config.Config) {
 		rec.Instance = rec.Host
 	}
 	rec.TXT["name"] = rec.Instance
-	if fp := certFingerprint(m.certPath); fp != "" {
+	if fp := certFingerprint(m.CertPath); fp != "" {
 		rec.TXT["fp"] = fp
 	}
 	if m.r == nil {
 		r, err := mdns.Start(rec)
 		if err != nil {
 			m.lastErr = err.Error()
-			m.log.Printf("warn: mDNS 未启用：%v", err)
+			m.Log.Printf("warn: mDNS 未启用：%v", err)
 			return
 		}
 		m.r = r
 	} else if err := m.r.Update(rec); err != nil {
 		m.lastErr = err.Error()
-		m.log.Printf("warn: mDNS 更新失败：%v", err)
+		m.Log.Printf("warn: mDNS 更新失败：%v", err)
 		return
 	}
 	m.lastErr = ""
@@ -75,10 +76,11 @@ func (m *mdnsRunner) apply(cfg config.Config) {
 	for _, ip := range st.Addrs {
 		m.addrs = append(m.addrs, ip.String())
 	}
-	m.log.Printf("info: mDNS 已通告 %s.local（实例 %s）", st.Host, st.Instance)
+	m.Log.Printf("info: mDNS 已通告 %s.local（实例 %s）", st.Host, st.Instance)
 }
 
-func (m *mdnsRunner) status(cfg config.Config) httpapi.MDNSStatus {
+// Status 返回适配成 HTTP 层结构的通告状态。
+func (m *MDNSRunner) Status(cfg config.Config) httpapi.MDNSStatus {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return httpapi.MDNSStatus{
@@ -92,7 +94,8 @@ func (m *mdnsRunner) status(cfg config.Config) httpapi.MDNSStatus {
 	}
 }
 
-func (m *mdnsRunner) close() {
+// Close 停止通告。
+func (m *MDNSRunner) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.r != nil {

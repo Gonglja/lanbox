@@ -102,6 +102,12 @@ func (t *tray) update(st UIState) {
 	icon := iconGreen
 	tip := "lanbox · 监听中"
 	switch {
+	case st.ReconnectStopped:
+		icon = iconRed
+		tip = "lanbox：连接已中断"
+	case st.Reconnecting:
+		icon = iconYellow
+		tip = "lanbox · 正在重连"
 	case !st.LoggedIn:
 		icon = iconRed
 		tip = "lanbox：未登录"

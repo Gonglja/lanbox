@@ -636,26 +636,114 @@ input[type='checkbox'] {
 /* ---------- 登录 ---------- */
 
 .auth {
+  position: relative;
   min-height: 100vh;
   min-height: 100dvh;
   display: grid;
   place-items: center;
-  padding: var(--space-6) var(--space-4);
+  padding: max(var(--space-6), env(safe-area-inset-top)) var(--space-4)
+    max(var(--space-6), env(safe-area-inset-bottom));
+  background: var(--canvas);
+  overflow: hidden;
+}
+/* 背景只是极淡的两团光晕，暗色 / 纸张主题下自动跟随令牌，不额外配色 */
+.auth-bg {
+  position: absolute;
+  inset: -25%;
+  pointer-events: none;
+  background:
+    radial-gradient(34% 26% at 50% 14%, color-mix(in oklch, var(--text) 8%, transparent), transparent 72%),
+    radial-gradient(30% 24% at 80% 86%, color-mix(in oklch, var(--text) 5%, transparent), transparent 70%);
 }
 .auth-card {
-  width: min(380px, 100%);
+  position: relative;
+  width: min(392px, 100%);
   display: grid;
   gap: var(--space-4);
   padding: var(--space-6);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-1);
+  box-shadow: var(--shadow-2);
+  animation: card-in 0.28s var(--ease) both;
+}
+.auth-card.is-shake {
+  animation: auth-shake 0.36s var(--ease);
+}
+.auth-head {
+  display: grid;
+  gap: var(--space-2);
 }
 .auth-sub {
   font-size: 13px;
   color: var(--text-2);
-  margin-top: calc(-1 * var(--space-2));
+}
+.auth-fields {
+  display: grid;
+  gap: var(--space-3);
+}
+.auth .field input {
+  height: 38px;
+  padding: 0 10px;
+  font-size: 14px;
+}
+.field-control {
+  position: relative;
+  display: block;
+}
+.field-control input {
+  padding-right: 40px;
+}
+.field-toggle {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  width: 28px;
+  height: 28px;
+  transform: translateY(-50%);
+  color: var(--text-3);
+}
+.field-toggle:hover,
+.field-toggle[aria-pressed='true'] {
+  color: var(--text);
+}
+.auth-caps {
+  margin: calc(-1 * var(--space-1)) 0 0;
+  color: var(--warning);
+}
+.auth-error {
+  margin: 0;
+  padding: var(--space-2) 10px;
+  border-radius: var(--radius-md);
+  background: var(--danger-soft);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.auth-remember {
+  font-size: 13px;
+  color: var(--text-2);
+}
+.auth-submit {
+  height: 38px;
+}
+.auth-submit.is-busy::before {
+  content: '';
+  width: 13px;
+  height: 13px;
+  flex: none;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: var(--radius-full);
+  animation: spin 0.7s linear infinite;
+}
+.auth-foot {
+  position: absolute;
+  bottom: max(var(--space-4), env(safe-area-inset-bottom));
+  margin: 0;
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---------- 应用骨架 ---------- */
@@ -2125,6 +2213,59 @@ body.admin-open #btn-account {
   color: var(--success);
 }
 
+/* ---------- 扫码连接 ---------- */
+
+.connect-card {
+  grid-column: 1 / -1;
+}
+.connect-name {
+  font-weight: 400;
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+.connect-body {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+  margin-top: var(--space-3);
+}
+.connect-qr {
+  flex: none;
+  width: 160px;
+  height: 160px;
+  padding: 6px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+.qr-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.connect-side {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1;
+}
+.connect-side .hint {
+  margin: 0;
+}
+/* 对话框里的同一套布局：没有标题时不需要上边距 */
+.connect-panel .connect-body {
+  margin-top: 0;
+}
+@media (max-width: 560px) {
+  .connect-body {
+    flex-direction: column;
+    align-items: center;
+  }
+  .connect-side {
+    width: 100%;
+  }
+}
+
 /* ---------- 对话框 ---------- */
 
 .modal-root,
@@ -2153,6 +2294,20 @@ body.admin-open #btn-account {
 .dialog-title {
   font-size: 15px;
   font-weight: 600;
+}
+.dialog-wide {
+  width: min(520px, 100%);
+}
+.dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.dialog-body {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
 }
 .dialog-text {
   font-size: 13.5px;
@@ -2190,6 +2345,27 @@ body.admin-open #btn-account {
   from {
     transform: translateY(4px);
     opacity: 0;
+  }
+}
+@keyframes card-in {
+  from {
+    transform: translateY(8px) scale(0.99);
+    opacity: 0;
+  }
+}
+@keyframes auth-shake {
+  20%,
+  60% {
+    transform: translateX(-3px);
+  }
+  40%,
+  80% {
+    transform: translateX(3px);
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 
@@ -2288,6 +2464,13 @@ body.admin-open #btn-account {
 }
 
 @media (max-width: 480px) {
+  /* 登录：卡片留白收紧，输入框 16px 避免 iOS 聚焦放大页面 */
+  .auth-card {
+    padding: var(--space-5);
+  }
+  .auth .field input {
+    font-size: 16px;
+  }
   .memo {
     padding: var(--space-3);
   }

@@ -23,8 +23,18 @@ type Options struct {
 	Log        *log.Logger
 	Live       *config.Live
 	MDNSStatus func() MDNSStatus
+	Discover   DiscoverFunc
 	StartedAt  time.Time
 	Version    string
+
+	// AllowLoopbackLogin 打开回环引导登录（只有 Android App 会设）。
+	AllowLoopbackLogin bool
+	LoopbackToken      string
+	// RestartDisabled 为 true 时 /api/config/restart 返回 501（手机上没有进程重启）。
+	RestartDisabled bool
+	// IfaceAddrs 提供宿主机自己的非回环 IP（Android 上 Go 拿不到网卡列表）。
+	// 为 nil 时只依赖 net.Interfaces()。
+	IfaceAddrs func() []string
 }
 
 // Server 是 lanbox 的 HTTP 处理入口。
@@ -41,6 +51,17 @@ type Server struct {
 	mdnsStatus func() MDNSStatus
 	startedAt  time.Time
 	version    string
+
+	// discover 由 main 注入（内部用 internal/mdns）；结果缓存 discoverCacheTTL。
+	discover      DiscoverFunc
+	allowLoopback   bool
+	loopbackToken   string
+	restartDisabled  bool
+	ifaceAddrs       func() []string
+	loopbackLimiter *auth.Limiter
+	discoverMu    sync.Mutex
+	discoverCache []DiscoveredServer
+	discoverAt    time.Time
 }
 
 // New 组装路由与中间件。
@@ -64,6 +85,12 @@ func New(opts Options) *Server {
 		mux:        http.NewServeMux(),
 		live:       opts.Live,
 		mdnsStatus: opts.MDNSStatus,
+		discover:   opts.Discover,
+		allowLoopback:   opts.AllowLoopbackLogin,
+		loopbackToken:   opts.LoopbackToken,
+		restartDisabled:  opts.RestartDisabled,
+		ifaceAddrs:       opts.IfaceAddrs,
+		loopbackLimiter: auth.NewLimiter(time.Minute, 10, time.Minute),
 		startedAt:  opts.StartedAt,
 		version:    opts.Version,
 	}
@@ -96,6 +123,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/me", s.withAuth(s.handleMe))
 	s.mux.HandleFunc("GET /api/stats", s.withAuth(s.handleStats))
 	s.mux.HandleFunc("POST /api/password", s.withAuth(s.handleChangePassword))
+
+	// 连接信息与二维码（发给用户自己的手机/另一台电脑），以及局域网发现
+	s.mux.HandleFunc("GET /__app/login", s.handleLoopbackLogin)
+	s.mux.HandleFunc("GET /api/connect", s.withAuth(s.handleConnect))
+	s.mux.HandleFunc("GET /api/connect/qr.svg", s.withAuth(s.handleConnectQR))
+	s.mux.HandleFunc("GET /api/discover", s.withAuth(s.handleDiscover))
 
 	s.mux.HandleFunc("GET /api/items", s.withAuth(s.handleListItems))
 	s.mux.HandleFunc("POST /api/items", s.withAuth(s.handleCreateItem))

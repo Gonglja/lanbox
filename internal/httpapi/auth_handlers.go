@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"crypto/subtle"
+	"net"
 	"net/http"
 	"time"
 )
@@ -13,6 +15,56 @@ type loginInput struct {
 type meOutput struct {
 	Username string `json:"username"`
 	IsAdmin  bool   `json:"is_admin"`
+}
+
+// loginOutput 是 /api/login 的响应。
+// 令牌只在跨域请求时下发（纯 web 客户端）：同源 Web UI 继续依赖 HttpOnly cookie，
+// 响应体与以前完全一致（token/expires_at 为 omitempty）。
+type loginOutput struct {
+	Username  string `json:"username"`
+	IsAdmin   bool   `json:"is_admin"`
+	Token     string `json:"token,omitempty"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+}
+
+// handleLoopbackLogin 是 Android App 的免密入口：Go 侧每次启动生成一次性随机令牌，
+// Kotlin 用它打开 https://127.0.0.1:<port>/__app/login?t=<token>，换来一个正常会话 Cookie。
+//
+// 约束：只在 AllowLoopbackLogin 打开时存在；只接受回环来源；常量时间比较；
+// 独立限速；失败一律 404（不暴露路由存在性）。
+func (s *Server) handleLoopbackLogin(w http.ResponseWriter, r *http.Request) {
+	if !s.allowLoopback || s.loopbackToken == "" {
+		http.NotFound(w, r)
+		return
+	}
+	ip := net.ParseIP(clientIP(r))
+	if ip == nil || !ip.IsLoopback() {
+		http.NotFound(w, r)
+		return
+	}
+	if !s.loopbackLimiter.Allowed("loopback") {
+		writeError(w, http.StatusTooManyRequests, "too_many_requests", "请求过于频繁，请稍后再试")
+		return
+	}
+	got := r.URL.Query().Get("t")
+	if subtle.ConstantTimeCompare([]byte(got), []byte(s.loopbackToken)) != 1 {
+		s.loopbackLimiter.Fail("loopback")
+		http.NotFound(w, r)
+		return
+	}
+	s.loopbackLimiter.Reset("loopback")
+	token, expires, err := s.auth.NewSession("admin")
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: sessionCookie, Value: token, Path: "/",
+		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, Expires: expires,
+	})
+	w.Header().Set("Cache-Control", "no-store")
+	s.log.Printf("info: 本地回环引导登录成功")
+	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -42,7 +94,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, Expires: expires,
 	})
 	s.log.Printf("info: %s 从 %s 登录成功", u.Username, ip)
-	writeJSON(w, http.StatusOK, meOutput{Username: u.Username, IsAdmin: u.IsAdmin})
+
+	out := loginOutput{Username: u.Username, IsAdmin: u.IsAdmin}
+	if crossOrigin(r) {
+		// 跨域客户端拿不到 Set-Cookie 的会话，需要自己保存并随请求携带。
+		out.Token = token
+		out.ExpiresAt = expires.UTC().Format(time.RFC3339)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {

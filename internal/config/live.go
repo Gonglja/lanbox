@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -21,6 +23,8 @@ var (
 	ErrInvalidTLS = errors.New("证书无法加载")
 	// ErrListenUnavailable 表示新的监听地址绑定失败。
 	ErrListenUnavailable = errors.New("监听地址不可用")
+	// ErrLocked 表示字段被宿主程序固定（Android App 强制 listen/data_dir 等）。
+	ErrLocked = errors.New("字段由 App 固定")
 )
 
 // restartFields 是修改后必须重启才能生效的字段。
@@ -53,6 +57,7 @@ type Live struct {
 
 	mu          sync.RWMutex
 	cur         Config
+	locked      map[string]string
 	lastRestart time.Time
 	cooldown    time.Duration
 	now         func() time.Time
@@ -86,6 +91,87 @@ func (l *Live) BaselineConfig() Config {
 	return l.base
 }
 
+// Lock 固定若干字段：文件配置与网页覆盖都无法改变它们。
+// 桌面端不调用；Android App 用它把 listen/data_dir/限额钉死在应用私有取值上。
+func (l *Live) Lock(pairs map[string]string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.locked == nil {
+		l.locked = make(map[string]string, len(pairs))
+	}
+	for k, v := range pairs {
+		l.locked[k] = v
+	}
+	applyLocked(&l.cur, l.locked)
+	applyLocked(&l.base, l.locked)
+	// 网页覆盖文件跟着被锁的 data_dir 走（Android 上默认的 ./data 不可写）。
+	if dir, ok := l.locked["data_dir"]; ok && dir != "" {
+		l.webPath = filepath.Join(dir, "webconfig.json")
+	}
+}
+
+// applyLocked 把锁定值写进配置；未知键忽略。
+func applyLocked(c *Config, locked map[string]string) {
+	for k, v := range locked {
+		switch k {
+		case "listen":
+			c.Listen = v
+		case "data_dir":
+			c.DataDir = v
+		case "max_file_size_mb":
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+				c.MaxFileSizeMB = n
+			}
+		case "min_free_disk_mb":
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+				c.MinFreeDiskMB = n
+			}
+		case "mdns.hostname":
+			c.MDNS.Hostname = v
+		case "tls.cert_file", "tls.key_file":
+			c.TLS.CertFile, c.TLS.KeyFile = "", ""
+		}
+	}
+}
+
+// lockedValue 读出配置里某个键的当前值（与 applyLocked 对称）。
+func lockedValue(c *Config, key string) string {
+	switch key {
+	case "listen":
+		return c.Listen
+	case "data_dir":
+		return c.DataDir
+	case "max_file_size_mb":
+		return strconv.FormatInt(c.MaxFileSizeMB, 10)
+	case "min_free_disk_mb":
+		return strconv.FormatInt(c.MinFreeDiskMB, 10)
+	case "mdns.hostname":
+		return c.MDNS.Hostname
+	case "tls.cert_file", "tls.key_file":
+		return ""
+	}
+	return ""
+}
+
+// checkLocked 在落盘前拒绝修改被锁字段，并把锁定值重新写进 desired。
+func (l *Live) checkLocked(desired *Config) error {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	for k, want := range l.locked {
+		if got := lockedValue(desired, k); got != want {
+			return fmt.Errorf("%w：%s", ErrLocked, k)
+		}
+	}
+	applyLocked(desired, l.locked)
+	return nil
+}
+
+func (l *Live) applyLockedTo(c *Config) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	applyLocked(c, l.locked)
+}
+
 // Paths 返回配置文件与覆盖文件路径。
 func (l *Live) Paths() (configFile, webConfig string) { return l.cfgPath, l.webPath }
 
@@ -98,6 +184,9 @@ func (l *Live) Update(desired Config) (Result, error) {
 	}
 
 	prev := l.Current()
+	if err := l.checkLocked(&desired); err != nil {
+		return res, err
+	}
 	if desired.TLS != prev.TLS {
 		if _, err := tls.LoadX509KeyPair(desired.TLS.CertFile, desired.TLS.KeyFile); err != nil {
 			return res, fmt.Errorf("%w: %v", ErrInvalidTLS, err)
@@ -139,6 +228,7 @@ func (l *Live) Update(desired Config) (Result, error) {
 	l.mu.Lock()
 	l.cur = desired
 	l.base = base
+	applyLocked(&l.base, l.locked)
 	l.mu.Unlock()
 
 	if len(res.Applied) > 0 && l.hooks.Apply != nil {
@@ -152,6 +242,13 @@ func (l *Live) Update(desired Config) (Result, error) {
 // DropWebOverride 清除单个字段的网页覆盖（启动自愈与"恢复默认"用）。
 func (l *Live) DropWebOverride(key string) (Result, error) {
 	res := Result{Changed: []string{}, Applied: []string{}, RestartRequired: []string{}}
+	l.mu.RLock()
+	_, isLocked := l.locked[key]
+	l.mu.RUnlock()
+	if isLocked {
+		// 被 App 固定的字段没有「恢复默认」可谈。
+		return res, nil
+	}
 	prev := l.Current()
 	ov, err := loadOverrides(l.webPath)
 	if err != nil {
@@ -167,6 +264,7 @@ func (l *Live) DropWebOverride(key string) (Result, error) {
 	if err != nil {
 		return res, err
 	}
+	l.applyLockedTo(&next)
 	res.Changed = changedKeys(prev, next)
 	for _, k := range res.Changed {
 		if needsRestart(k) {
@@ -182,6 +280,7 @@ func (l *Live) DropWebOverride(key string) (Result, error) {
 	l.mu.Lock()
 	l.cur = next
 	l.base = base
+	applyLocked(&l.base, l.locked)
 	l.mu.Unlock()
 	if len(res.Applied) > 0 && l.hooks.Apply != nil {
 		if err := l.hooks.Apply(prev, next); err != nil {

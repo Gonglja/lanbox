@@ -1,0 +1,168 @@
+/* client.css：纯 web 客户端专属样式。
+ *
+ * 主体（布局、组件、主题）全部来自 ../web/style.css，这里只补连接层：
+ * 连接页的服务器地址栏、顶栏「已连接」徽标，以及隐藏客户端不需要的管理/状态入口。
+ * 隐藏只用 CSS、不删 DOM：共享的 web/main.js 会绑定这些节点，删掉会抛错。 */
+
+/* ---------- 连接页 ---------- */
+
+.field-server input {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
+/* 证书提示常驻，别跟错误提示抢视觉权重 */
+.auth-hint {
+  margin-top: 2px;
+}
+
+/* ---------- 顶栏「已连接」徽标 ---------- */
+
+.conn {
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1;
+  transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+
+.conn .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--text-3);
+  transition: background var(--dur) var(--ease);
+}
+
+.conn.is-on {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 22%, transparent);
+}
+
+.conn.is-on .dot {
+  background: var(--success);
+}
+
+.conn.is-off {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 22%, transparent);
+}
+
+.conn.is-off .dot {
+  background: var(--danger);
+}
+
+.conn-text {
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 客户端不提供管理面板与状态页：转发核心之外的动作都在服务器本机完成 */
+body.is-client #filter-status,
+body.is-client #btn-admin,
+body.is-client #admin-drawer,
+body.is-client #restart-mask {
+  display: none !important;
+}
+
+/* ---------- 连接页：服务器簿与扫码入口 ---------- */
+
+.auth-tools {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: center;
+  width: min(392px, 100%);
+}
+
+.server-list {
+  width: min(392px, 100%);
+  max-height: 34vh;
+  overflow: auto;
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.server-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.server-pick {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+  padding: 7px 10px;
+  text-align: left;
+  background: none;
+  border: 0;
+  color: var(--text-2);
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+}
+
+.server-pick:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--text) 4%, transparent);
+  color: var(--text);
+}
+
+.server-pick:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.server-name {
+  font-size: 13px;
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-url {
+  font-size: 11.5px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auth-status {
+  width: min(392px, 100%);
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-3);
+  text-align: center;
+}
+
+.auth-status.is-warn {
+  color: var(--warning);
+}
+
+/* ---------- 扫码 / 服务器面板 ---------- */
+
+.scan-wrap,
+.server-panel {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.scan-video {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: #000;
+  border-radius: var(--radius-md);
+  object-fit: cover;
+}

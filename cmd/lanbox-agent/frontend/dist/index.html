@@ -89,6 +89,11 @@
   </nav>
 
   <main id="pane-records" class="pane">
+    <div id="reconnect-banner" class="banner" role="status" aria-live="polite" hidden>
+      <span class="icon" data-icon="alert"></span>
+      <span id="reconnect-text" class="banner-text"></span>
+      <button id="reconnect-login-btn" class="link-btn" type="button" hidden>去登录</button>
+    </div>
     <div class="composer">
       <textarea id="msg" class="composer-input" placeholder="写点什么（支持 Markdown），或选文件…（Ctrl+Enter 发送）"></textarea>
       <div id="composer-preview" class="composer-preview" hidden></div>

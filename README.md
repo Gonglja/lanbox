@@ -15,6 +15,9 @@
 - 桌面端侧栏可收成 68px 图标栏；管理页占满主内容区、左侧栏保留（宽屏设置两列）
 - 侧栏底部账号行弹出菜单（memos 风格）：外观（二级菜单，四档主题）/ 管理 / 退出登录；`Esc`、点外部、方向键均可用
 - 独立账号 + 会话过期 + 登录限速
+- 另有**纯 web 客户端**（`client/`，可打成单文件 HTML）：任意浏览器填「服务器地址 + 账号」即可收发，视觉与服务端网页一致，零安装、零构建
+- **手机扫码即连**：服务端 Web UI 侧栏「扫码连接」与状态页都能出连接二维码（服务端自写 QR 编码器，零依赖），手机相机扫一下就能打开
+- **局域网发现**：客户端可探测 `.local` 名称（走系统 mDNS 解析），连上一台后还能让服务端列出网内所有实例
 
 ## 快速开始
 
@@ -71,6 +74,7 @@ lanbox-cli logout
 - **手动发送**：窗口内输入消息、选文件、选文件夹，或把文件/文件夹直接拖进窗口
 - **Markdown 与 Web UI 一致**：消息输入按 Markdown 写，工具条「眼睛」按钮在编辑框下方展开只读预览（同一个 `renderMarkdown`，本机上传记录的正文也按 Markdown 渲染；超过 8 KB 的正文在记录里只预览开头）
 - **可暂停/可关闭**：暂停状态持久化；关闭监听时完全不读取剪贴板
+- **断线自动重连**：空闲时每 30 秒探活一次 `/api/me`，连续 2 次网络失败才判断线，之后按 2s→5s→10s→20s→30s→60s 退避重连；会话过期用保存的密码自动重登（每分钟最多一次，避开服务端登录限速）；没保存密码、证书指纹不符或连续 3 次认证失败则停手等手动登录。重连中顶部提示条显示倒计时，状态点与托盘图标同步变黄/变红
 - **主题与 Web UI 一致**：顶栏调色板图标可选「跟随系统 / 亮色 / 暗色 / 纸张」，同一套设计令牌与 `lanbox.theme` 键
 - **固定窗口**：456×720，标题栏只有最小化与关闭（不可拖动缩放）
 - **托盘常驻**：关闭窗口默认最小化到托盘（剪贴板继续工作），托盘菜单可打开窗口 / 暂停 / 立即上传剪贴板 / 退出；图标用颜色表示状态（绿=监听中、黄=暂停、红=未登录）
@@ -108,10 +112,54 @@ make windows   # 产出 dist/lanbox-agent-windows-{amd64,arm64}.exe
 
 限制：仅 Windows 10 1803+ / Windows 11；本机历史只存在内存；图片自动上传默认关闭（截图噪声大）。
 
+## 纯 web 客户端
+
+不想装 agent、也不想开 CLI 的设备（手机、借来的电脑、平板）用这个：一个静态页面，
+填「服务器地址 + 账号密码」就能收发。界面与服务端网页完全一致（同一份 `style.css`、
+Markdown 渲染、图片/视频预览、四档主题），只是去掉了管理面板与状态页。
+
+```bash
+make client        # 产出 dist/lanbox-client.html（单文件，约 180KB）
+```
+
+- **单文件分发**：`lanbox-client.html` 直接双击（`file://`）就可用，也可以丢到任意静态托管
+  （NAS、GitHub Pages、内网 nginx）——页面里没有任何外部资源引用
+- **开发期**：在仓库根目录 `python3 -m http.server`，打开 `/client/` 即可（直接复用 `web/` 的模块）
+- 首次连接自签证书的服务器：先在新标签页直接打开 `https://<服务器地址>`，选择「继续访问」，
+  再回到客户端登录（浏览器不会为跨域请求单独放行未信任的证书）
+- 地址栏可省略协议：`192.168.1.9` 会补成 `https://192.168.1.9`；非默认端口写 `host:8443`
+- 服务器地址、令牌、用户名存在 `localStorage`（`lanbox.client.*`），下次打开自动续连
+- **服务器簿**：连过的服务器记在 `lanbox.client.servers`（最多 12 条，最近使用优先），连接页下方点一下就填地址
+- 顶栏徽标点开是「服务器与局域网」面板：「发现其他实例」（服务端真 mDNS 浏览）、「断开并切换」；二维码只在服务端 Web UI 展示，客户端不重复画
+
+### 怎么加一台服务器
+
+| 方式 | 说明 |
+|---|---|
+| **扫码添加** | 服务端 Web UI 侧栏「扫码连接」（或「状态」页的「手机扫码连接」卡片）里有二维码。客户端扫码（Android Chrome 等支持 `BarcodeDetector`；桌面 Chrome 与 iOS Safari 没有，会退回粘贴地址），扫到后自动探测 `/api/healthz` 并记进服务器簿 |
+| **发现局域网** | 浏览器拿不到原始组播，只能请系统解析器解析 `.local`：客户端会探测 `https://lanbox.local` 与 `https://lanbox.local:8443`（外加服务器簿里出现过的 `.local` 名）。macOS/iOS/Android/Linux 原生支持，Windows 视版本 |
+| **发现其他实例** | 已连上一台时点顶栏徽标 →「发现其他实例」，由**服务端**做真正的 mDNS 浏览（同 `lanbox-cli discover`），列出全网的实例、地址与证书指纹 |
+| **手动** | 地址栏直接填 `host` / `host:8443`，协议可省略 |
+
+### 跨域与令牌
+
+客户端与服务端**不同源**（甚至 `file://`），因此服务端为 `/api/*` 开放了 CORS，并新增了
+Bearer 令牌通道：
+
+- 登录响应**只在跨域请求时**在响应体里返回 `token`；同源网页继续用 `HttpOnly; Secure; SameSite=Lax`
+  的 `sid` cookie，响应体与以前完全一致
+- 跨域请求必须带 `Authorization: Bearer <token>`；`<img>` / `<video>` / `<a download>` / `EventSource`
+  设不了请求头，改用 `?token=`，而服务端**只对 GET/HEAD** 接受查询串令牌（写操作仍必须带请求头）
+- CORS 不设 `Access-Control-Allow-Credentials`：跨站页面永远拿不到 `sid` cookie，本地能力完全取决于
+  它能否拿到显式令牌；`POST /api/login` 与带 `Authorization` 的请求跳过 Origin 同源校验，
+  其余不安全方法的中 CSRF 校验保持原样
+- 退出登录即作废会话；令牌不会写进访问日志（只记路径，不记查询串），`Referrer-Policy: no-referrer` 已在全局生效
+- 想收紧的话，可以在反向代理上对不在白名单里的 `Origin` 直接返回 403（同源网页不受影响）
+
 ## 交叉编译
 
 ```bash
-make dist     # 产出 dist/ 下 12 个静态二进制（Linux + Windows，服务端 + CLI）+ SHA256SUMS
+make dist     # 产出 dist/ 下 14 个静态二进制（Linux + Windows，服务端 + CLI + 客户端）+ 单文件网页 + LICENSE + SHA256SUMS
 ```
 
 | 产物 | 适用 |
@@ -124,6 +172,9 @@ make dist     # 产出 dist/ 下 12 个静态二进制（Linux + Windows，服�
 | `dist/lanbox-agent-windows-amd64.exe` | Windows 客户端（托盘 + 剪贴板上传，x64） |
 | `dist/lanbox-windows-arm64.exe` | Windows on ARM |
 | `dist/lanbox-agent-windows-arm64.exe` | Windows 客户端（ARM64） |
+| `dist/lanbox-client.html` | 纯 web 客户端（单文件，任意浏览器打开） |
+| `dist/LICENSE` | 许可证正文（MIT）；分发产物时请一并带上 |
+| `dist/SHA256SUMS` | 上面全部产物的校验和 |
 
 `lanbox-cli-*` 是配套的命令行客户端，平台与本表一致（Windows 版同样带 `.exe`）。
 
@@ -135,6 +186,7 @@ make dist     # 产出 dist/ 下 12 个静态二进制（Linux + Windows，服�
 |---|---|
 | `make build` | 只编本机架构到 `./lanbox` 与 `./lanbox-cli`（Windows 上自动带 `.exe`） |
 | `make agent` | 只编 Windows 客户端 `./lanbox-agent.exe` |
+| `make client` | 只打包纯 web 客户端 `dist/lanbox-client.html` |
 | `make windows` | 只编 Windows 的 6 个产物（amd64/arm64 × 服务端/CLI/客户端） |
 | `make test` | 跑全部测试 |
 | `make check` | 提交前自检：gofmt + go vet + test |
@@ -157,7 +209,7 @@ Windows 版说明：
   powershell -ExecutionPolicy Bypass -File build-windows.ps1 -Version v1.0.0 -Arch amd64
   ```
 
-  产物与 `make windows` 一致：`dist\lanbox-windows-{amd64,arm64}.exe`、`dist\lanbox-cli-windows-{amd64,arm64}.exe`，并生成 `dist\SHA256SUMS`。
+  产物与 `make windows` 一致：`dist\lanbox-windows-{amd64,arm64}.exe`、`dist\lanbox-cli-windows-{amd64,arm64}.exe`，并生成 `dist\SHA256SUMS`、拷入 `dist\LICENSE`。
 - 改 `listen` 后的「立即重启」可用：Windows 没有 `exec(2)`，实现是**启动新进程再退出旧进程**（PID 会变）。
 - `data/tls`、会话文件的 0600/0700 收紧只在类 Unix 平台生效；Windows 用文件系统 ACL，Go 的权限位不适用。
 - mDNS 通告与 `lanbox-cli discover` 在 Windows 上可用（会逐网卡加入组播组并固定出口，避免被虚拟网卡抢走）。
@@ -165,6 +217,43 @@ Windows 版说明：
 
 
 浏览器首次访问自签证书会警告，选择"继续访问"；需要长期免警告见下方"信任自签证书"。
+
+## 发版（GitHub Actions）
+
+打 tag 即自动编译并发布，产物挂在 GitHub Release 上（`.github/workflows/release.yml`）：
+
+```bash
+# 建议 tag 用 semver，Android 的 versionName / versionCode 会跟着走
+git tag v1.2.3
+git push github v1.2.3        # 推到 GitHub 才会有 CI；镜像仓库另推 origin
+```
+
+CI 跑 `go vet` + `go test`（gofmt 只打告警不阻塞）→ `make dist`（Linux/Windows/CLI/agent/纯 web 客户端）
+→ `make android`（NDK 编 `liblanbox.so` + Gradle `assembleRelease`），最后把 `dist/*` 全量传到
+该 tag 的 GitHub Release 上。
+
+- 版本号注入：`lanbox -version` 用 tag 名（去掉 `v`），APK 的 `versionName` 同源，
+  `versionCode = major*10000 + minor*100 + patch`（非 semver 的 tag 退化为 1）。
+- tag 里带 `-rc1` / `-beta` 之类后缀会发布成 **prerelease**。
+- 手动重跑：Actions → release → Run workflow，**ref 必须选 Tags 下的 tag**。
+- 构建产物同时作为 workflow artifact 保留 14 天，方便排查失败。
+
+APK 签名：配了下面这组 secrets 就用正式签名（`android/keystore.properties` 由 CI 现场生成，
+仓库里不放密钥）；没配则退化成 debug 签名（能装，但无法覆盖安装正式版，会打 `::warning::`）。
+
+| Secret | 说明 |
+|---|---|
+| `ANDROID_KEYSTORE_B64` | `lanbox-release.jks` 的 base64（`base64 -w0 android/lanbox-release.jks`） |
+| `ANDROID_KEYSTORE_PASSWORD` | storePassword |
+| `ANDROID_KEY_ALIAS` | 可选，默认 `lanbox` |
+| `ANDROID_KEY_PASSWORD` | 可选，默认同 storePassword |
+
+```bash
+# 生成 base64（Linux/macOS；Windows 用 PowerShell）
+base64 -w0 android/lanbox-release.jks > keystore.b64
+# Windows PowerShell
+# [Convert]::ToBase64String([IO.File]::ReadAllBytes("android\lanbox-release.jks")) > keystore.b64
+```
 
 ## 配置
 
@@ -214,6 +303,11 @@ Windows 版说明：
 - 覆盖文件固定在"文件/环境变量解析出的 `data_dir`"下：改过 `data_dir` 后，旧目录里的 `webconfig.json` 仍是真源
 - **救援**：把 `listen` 改成不可用的值（或端口被占用）时，服务启动会检测到并自动忽略该覆盖、回退到文件配置，日志有 `warn: 网页设置的 listen=... 绑定失败`；也可直接编辑/删除 `<data_dir>/webconfig.json`
 - 运行时健康检查：`GET /api/healthz`（无需登录，返回 `ok/name/version/uptime_s`）
+- 连接信息：`GET /api/connect`（需登录，返回 `name/version/urls/preferred`，地址按
+  mDNS 名 → 当前访问地址 → 各网卡地址 → 回环地址排序）；`GET /api/connect/qr.svg?url=…`
+  返回该地址的二维码 SVG（只接受列表里的地址）
+- 局域网实例：`GET /api/discover`（需登录，服务端做 mDNS 浏览，结果缓存 3 秒；
+  返回 `name/host/port/urls/proto/fingerprint/current`）
 - 运行统计：`GET /api/stats`（需登录，返回内容条数/未取走/已取走、附件数与总字节；
   管理员额外含 `users`、`disk.free_bytes`、`items_dir`、`listen`、`mdns`，非管理员响应里没有 `admin` 键）；
   网页侧栏「状态」页显示的就是这份数据
@@ -238,6 +332,15 @@ LANBOX_PASSWORD=... lanbox-cli login # 不给 -s 时自动发现（唯一实例�
 
 自动发现时会按 TXT 里的证书指纹**固定 TLS**（比 `-insecure` 安全），指纹随会话文件保存，后续命令无需再发现；
 `-ca` 与 `-insecure` 优先级更高。多个实例时会列出候选并要求用 `-s` 指定。
+
+网页与客户端：
+
+- 网页「状态」页 →「手机扫码连接」：二维码 + 地址下拉（mDNS 名 / 当前访问地址 / 各网卡地址），
+  手机相机扫码即可打开；侧栏「扫码连接」是同一份内容的常驻入口，不必先切到状态页。
+  二维码由 `internal/qr` 在服务端生成 SVG（字节模式、纠错等级 M、
+  版本 1–10），**没有引入任何第三方库**
+- 纯 web 客户端：「扫码添加」「发现局域网」「发现其他实例」三种方式，详见上文「怎么加一台服务器」
+- 浏览器不能直接发 mDNS 组播，所以客户端首次发现靠系统解析 `.local`；真浏览由服务端代劳
 
 排查：
 
@@ -307,6 +410,8 @@ Windows：把 `cert.pem` 重命名为 `cert.crt` 后"导入到受信任的根证
   且 SVG 走内联时额外带 `Content-Security-Policy: … sandbox`，其他类型带 `?inline=1` 也仍按附件返回
 - Markdown 渲染只生成 DOM 节点、不经过 `innerHTML`，禁止原始 HTML；外部图片只渲染为链接（不自动加载）
 - 来源 IP 取 TCP 直连地址，不信任 `X-Forwarded-For`（避免伪造来源标注）
+- `/api/*` 的 CORS 允许任意源，但不允许携带凭据；跨域调用一律靠 Bearer 令牌，同源网页的
+  CSRF 校验不变（详见「纯 web 客户端 → 跨域与令牌」）
 
 ## 开发
 
@@ -317,6 +422,26 @@ go build ./...     # 编译检查
 ```
 
 前端是 `web/` 下手写的 ES 模块（含自研的极简 Markdown 渲染器与图片/视频预览），由 `//go:embed all:web` 直接打进二进制，**没有构建步骤**：改完刷新页面即可（`go build` 不依赖 Node）。界面风格与主题令牌的说明见 `docs/superpowers/specs/2026-11-26-web-memos-theme-design.md`。
+
+纯 web 客户端在 `client/`：`index.html` + 连接层 `app.js` + 少量样式，主体直接
+`import '../web/main.js'` 复用服务端界面（服务端从不设置 `__LANBOX_BASE__`/`__LANBOX_TOKEN__`，
+所以两边共用同一份代码）。单文件由 `tools/buildclient` 打包：内联 CSS/经典脚本，
+把 ES 模块按依赖顺序转成 blob URL 再加载，无 npm、无 bundler。
+
+```bash
+make client                        # 打包成 dist/lanbox-client.html
+go test ./tools/buildclient/       # 打包器测试
+go test ./internal/qr/             # 二维码编码器（对 python-qrcode / qrcodegen 的黄金数据）
+node --check client/app.js         # 语法校验（web/*.js 同样适用）
+```
+
+二维码编码器在 `internal/qr`（字节模式、纠错等级 M、版本 1–10、SVG 输出）。正确性靠两份
+交叉参照数据：`testdata/golden.json` 由 Python `qrcode` 在强制掩码下生成（逐模块比对），
+`testdata/golden_auto.json` 由 Nayuki `qrcodegen`（规范级罚分实现）生成（校验自动选掩码）。
+重新生成见 `internal/qr/testdata/README.md`。
+
+`client/index.html` 是 `web/index.html` 的副本，只多了服务器地址欄与「已连接」徒标；
+服务端离线或只是暂时连不上时不会清掉落盘令牌（只有 401 或主动退出才会）。
 
 手动验收清单（前端无 E2E，改前端后逐项过一遍）：
 
@@ -354,9 +479,24 @@ go build ./...     # 编译检查
 32. 发 `.txt` / `.html` → 不出现预览格，仍是附件下载；直接访问 `…?inline=1` 也返回 `attachment`
 33. 发一条 `# 标题` + 列表 + 表格 + 代码块 → 时间线正确渲染；发布区「眼睛」按钮可切换实时预览
 34. 正文里写 `<script>alert(1)</script>` 或 `[x](javascript:alert(1))` → 原样显示为文本/纯文本链接，不执行
+35. 纯 web 客户端：`make client` 后双击 `dist/lanbox-client.html` → 显示连接页；填服务器地址与账号 → 进入时间线（主题、Markdown、图片/视频预览与服务端一致）
+36. 客户端里发布文字/文件 → 服务端网页 1 秒内出现（SSE 走 `?token=`）；反过来也实时出现
+37. 客户端里点附件下载与「下载全部 (.zip)」→ 文件正确保存；点顶栏徽标 → 断开并回到连接页，token 从 `localStorage` 消失
+38. 客户端不显示「状态」与「管理」入口；把地址写成 `192.168.1.9:8443`（省略协议）同样能连上
+39. 服务端网页侧栏「扫码连接」在任意页面都能打开二维码对话框；状态页「手机扫码连接」卡片同样有二维码；用手机相机扫，能打开同一服务端的登录页（自签证书需选择继续访问）
+40. 状态页（或扫码对话框）地址下拉切换（mDNS 名 / 网卡地址）→ 二维码与 `…/api/connect/qr.svg` 内容同步变化
+41. 客户端点「发现局域网」→ 命中 `lanbox.local` 并自动填入地址（找不到时给出提示，不报错）
+42. 客户端连上后点顶栏徽标 →「服务器与局域网」面板只有发现/断开，不出二维码；「发现其他实例」能列出网内其它 lanbox（含「（本机）」标注）；客户端状态页也没有「手机扫码连接」卡片
+43. 在不支持 `BarcodeDetector` 的浏览器（桌面 Chrome / iOS Safari）点「扫码添加」→ 直接给粘贴地址输入框，粘贴 `https://<地址>` 后能连上
 
 ## 不做的事（有意为之）
 
 分片上传/断点续传、回收站与自动过期、频道与标签、全文索引、富文本编辑器、多语言。
 
 保留空目录、符号链接与文件权限；zip 断点续传；单附件 >4GB 的 zip（默认配置不会触发）
+
+## 许可证
+
+MIT License，见 [LICENSE](LICENSE)。`make dist` / `build-windows.ps1` 会把 `LICENSE` 一并拷进 `dist/`，分发二进制时请连同该文件一起给出。
+
+Windows 客户端依赖 [Wails](https://wails.io) 与 [fyne.io/systray](https://github.com/fyne-io/systray)（均为 MIT）；服务端与 CLI 无第三方依赖。

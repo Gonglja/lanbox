@@ -41,6 +41,7 @@ if (-not $NoAgent) {
 }
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+Copy-Item -Path (Join-Path $root "LICENSE") -Destination (Join-Path $OutDir "LICENSE") -Force
 
 # Cross-compilation uses environment variables; prefixing "VAR=x cmd" is a POSIX
 # shell feature that cmd.exe does not support.

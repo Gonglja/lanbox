@@ -6,6 +6,9 @@
 #                   同时产出 CLI（lanbox-cli）与 Windows 客户端（lanbox-agent）
 #   make windows    只编 Windows 的 exe（amd64/arm64，服务端 + CLI + 客户端）
 #   make agent      只编 Windows 客户端（lanbox-agent，含托盘与剪贴板监听）
+#   make client     把纯 web 客户端打成单文件 dist/lanbox-client.html
+#   make android    打 Android APK（需 JAVA_HOME=JDK17-21 + SDK35 + NDK27）
+#   make android-keystore 生成侧载签名（只需一次）
 #   make test       跑全部测试
 #   make check      gofmt + go vet + test（提交前自检）
 #   make clean      清掉 dist/ 与本机二进制
@@ -22,6 +25,10 @@ AGENT_CMD := ./cmd/lanbox-agent
 AGENT_TAGS := desktop,production
 AGENT_LDFLAGS = $(LDFLAGS) -H=windowsgui
 DIST     := dist
+ANDROID_SDK ?= $(HOME)/AppData/Local/Android/Sdk
+ANDROID_NDK ?= $(ANDROID_SDK)/ndk/27.0.12077973
+ANDROID_SO  := android/app/src/main/jniLibs/arm64-v8a/liblanbox.so
+ANDROID_GO  := ./mobile/jni
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 GOFLAGS  := -trimpath
 LDFLAGS  := -s -w -X main.version=$(VERSION)
@@ -41,7 +48,7 @@ endif
 
 PREFIX ?= /usr/local
 
-.PHONY: all build dist windows agent checksums test vet fmt check run install clean help
+.PHONY: all build dist windows agent client android android-keystore android-env checksums test vet fmt check run install clean help
 
 all: dist
 
@@ -54,6 +61,7 @@ build:
 ## dist: 交叉编译全部目标（Linux + Windows）到 dist/
 dist:
 	@mkdir -p $(DIST)
+	@cp LICENSE $(DIST)/LICENSE
 	@set -eu; \
 	for t in $(TARGETS); do \
 		os=$${t%%/*}; \
@@ -71,6 +79,7 @@ dist:
 			go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST)/$(CLI)-$$os-$$arch$$suffix $(CLI_CMD); \
 	done
 	@$(MAKE) --no-print-directory windows
+	@$(MAKE) --no-print-directory client
 	@$(MAKE) --no-print-directory checksums
 
 ## windows: 交叉编译 Windows exe（amd64/arm64，服务端 + CLI + 客户端）
@@ -104,9 +113,58 @@ else
 	@exit 1
 endif
 
+## android: build liblanbox.so and package the release APK into dist/
+android: android-env $(ANDROID_SO)
+	@printf 'sdk.dir=%s\n' "$$(cygpath -m "$(ANDROID_SDK)" 2>/dev/null || echo "$(ANDROID_SDK)")" > android/local.properties
+	cd android && ./gradlew :app:assembleRelease
+	@if [ -f android/keystore.properties ]; then \
+		cp android/app/build/outputs/apk/release/app-release.apk $(DIST)/lanbox-android.apk; \
+		echo "built $(DIST)/lanbox-android.apk"; \
+	else \
+		cp android/app/build/outputs/apk/release/app-release.apk $(DIST)/lanbox-android-debug.apk; \
+		echo "warn: no android/keystore.properties, debug-signed -> $(DIST)/lanbox-android-debug.apk"; \
+	fi
+
+## android-keystore: create the sideload signing key (once; back up jks + passwords)
+android-keystore:
+	@test -f android/lanbox-release.jks && { echo "android/lanbox-release.jks already exists, refuse to overwrite"; exit 1; } || true
+	@KT="$(JAVA_HOME)/bin/keytool"; [ -x "$$KT" ] || KT="$(JAVA_HOME)/bin/keytool.exe"; "$$KT" -genkeypair -v -keystore android/lanbox-release.jks -alias lanbox \
+	  -keyalg RSA -keysize 2048 -validity 10000 \
+	  -storepass lanbox123 -keypass lanbox123 \
+	  -dname "CN=lanbox, O=lanbox"
+	@printf 'storeFile=lanbox-release.jks\nstorePassword=lanbox123\nkeyAlias=lanbox\nkeyPassword=lanbox123\n' > android/keystore.properties
+	@echo "created android/lanbox-release.jks + android/keystore.properties (keep both safe)"
+
+## client: 把纯 web 客户端（client/）打成单文件 dist/lanbox-client.html
+client:
+	@mkdir -p $(DIST)
+	go run ./tools/buildclient -root . -out $(DIST)/lanbox-client.html
+
+# NDK 自带 clang 的宿主标签（Windows/MSYS 下是 windows-x86_64）
+NDK_HOST_TAG := $(shell uname -s | sed -e 's/^MINGW.*/windows-x86_64/' -e 's/^MSYS.*/windows-x86_64/' -e 's/^CYGWIN.*/windows-x86_64/' -e 's/^Linux/linux-x86_64/' -e 's/^Darwin/darwin-x86_64/')
+ANDROID_CC := $(ANDROID_NDK)/toolchains/llvm/prebuilt/$(NDK_HOST_TAG)/bin/aarch64-linux-android26-clang
+
+## android-env: check Android build prerequisites
+android-env:
+	@test -n "$(JAVA_HOME)" || { echo "JAVA_HOME is not set (need JDK 17-21)"; exit 1; }
+	@test -d "$(ANDROID_SDK)/platforms/android-35" || { echo "missing SDK platform android-35"; exit 1; }
+	@test -d "$(ANDROID_NDK)" || { echo "missing NDK: $(ANDROID_NDK)"; exit 1; }
+	@test -x "$(JAVA_HOME)/bin/keytool" || test -x "$(JAVA_HOME)/bin/keytool.exe" || { echo "keytool not found under JAVA_HOME"; exit 1; }
+	@echo "android env ok: JAVA_HOME=$(JAVA_HOME) NDK=$(ANDROID_NDK) clang=$(NDK_HOST_TAG)"
+
+# Use wildcard instead of $(shell find): on Windows the shell find may be
+# C:\Windows\System32\find.exe, which returns nothing -> make would think
+# liblanbox.so is always up to date and never rebuild it.
+ANDROID_SRCS := $(wildcard mobile/*.go mobile/jni/*.go internal/*.go internal/*/*.go) go.mod
+
+$(ANDROID_SO): $(ANDROID_SRCS)
+	@mkdir -p $(dir $@)
+	CGO_ENABLED=1 GOOS=android GOARCH=arm64 CC="$(ANDROID_CC)" \
+	  go build -buildmode=c-shared -trimpath -ldflags "-s -w" -o $@ $(ANDROID_GO)
+
 ## checksums: 生成并打印 dist/SHA256SUMS
 checksums:
-	@cd $(DIST) && sha256sum $(APP)-* > SHA256SUMS && cat SHA256SUMS
+	@cd $(DIST) && sha256sum $(APP)-* LICENSE > SHA256SUMS && cat SHA256SUMS
 
 ## test: 跑全部测试
 test:

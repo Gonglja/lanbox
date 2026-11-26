@@ -1,7 +1,7 @@
 // 纯展示逻辑：格式化与卡片渲染。
 import { paintAvatar, iconEl } from './ui.js';
 import { renderMarkdown } from './markdown.js';
-import { previewKind, mediaSrc, downloadSrc, openLightbox } from './media.js';
+import { previewKind, mediaSrc, downloadSrc, zipSrc, openLightbox } from './media.js';
 
 export function fmtBytes(n) {
   if (n < 1024) return n + ' B';
@@ -148,7 +148,7 @@ export function renderItem(item, handlers) {
 
     const link = document.createElement('a');
     link.className = 'btn btn-sm btn-icon';
-    link.href = `/api/items/${encodeURIComponent(item.id)}/files/${encodeURIComponent(f.id)}`;
+    link.href = downloadSrc(item.id, f.id);
     link.setAttribute('download', f.name);
     link.title = '下载';
     link.setAttribute('aria-label', `下载 ${f.name}`);
@@ -173,7 +173,7 @@ export function renderItem(item, handlers) {
     wrap.className = 'zip-row';
     const zip = document.createElement('a');
     zip.className = 'zip-btn';
-    zip.href = `/api/items/${encodeURIComponent(item.id)}/zip`;
+    zip.href = zipSrc(item.id);
     zip.setAttribute('download', `lanbox-${item.id}.zip`);
     zip.append(iconEl('archive'), document.createTextNode('下载全部 (.zip)'));
     wrap.append(zip);

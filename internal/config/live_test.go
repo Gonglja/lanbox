@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -95,5 +96,65 @@ func TestLiveRestartCooldown(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("Restart 钩子应调用 2 次，得到 %d", calls)
+	}
+}
+
+func TestLiveLockedKeys(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	// 配置文件里写了别的 listen/data_dir，Lock 之后必须被覆盖。
+	writeFile(t, cfgPath, `{"listen":":9443","data_dir":`+jsonPath(dir)+`}`)
+	lockedData := filepath.Join(dir, "app-data")
+
+	l, err := OpenLive(cfgPath, Hooks{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Lock(map[string]string{"listen": ":8443", "data_dir": lockedData, "max_file_size_mb": "512"})
+
+	if got := l.Current().Listen; got != ":8443" {
+		t.Fatalf("Lock 后当前 listen 未生效: %q", got)
+	}
+	if got := l.Current().DataDir; got != lockedData {
+		t.Fatalf("Lock 后当前 data_dir 未生效: %q", got)
+	}
+	if got := l.BaselineConfig().Listen; got != ":8443" {
+		t.Fatalf("基线也应被锁覆盖，得到 %q", got)
+	}
+
+	// 网页改被锁字段 → 明确报错且不生效
+	desired := l.Current()
+	desired.Listen = ":9443"
+	if _, err := l.Update(desired); !errors.Is(err, ErrLocked) {
+		t.Fatalf("期望 ErrLocked，得到 %v", err)
+	}
+	if got := l.Current().Listen; got != ":8443" {
+		t.Fatalf("被拒的更新不应生效: %q", got)
+	}
+
+	// 未锁字段仍可改，且锁字段在热更后不漂移
+	desired = l.Current()
+	desired.MaxFilesPerItem = 42
+	if _, err := l.Update(desired); err != nil {
+		t.Fatalf("未锁字段应可更新: %v", err)
+	}
+	if got := l.Current().MaxFilesPerItem; got != 42 {
+		t.Fatalf("max_files_per_item 未生效: %d", got)
+	}
+	if got := l.Current().Listen; got != ":8443" {
+		t.Fatalf("热更后锁字段漂移: %q", got)
+	}
+
+	// 网页覆盖文件必须落在被锁的 data_dir 里（Android 上默认 ./data 不可写）
+	if _, webPath := l.Paths(); webPath != filepath.Join(lockedData, "webconfig.json") {
+		t.Fatalf("webPath 应跟随锁定的 data_dir，得到 %q", webPath)
+	}
+
+	// 恢复默认不能清掉锁字段
+	if _, err := l.DropWebOverride("listen"); err != nil {
+		t.Fatalf("DropWebOverride 失败: %v", err)
+	}
+	if got := l.Current().Listen; got != ":8443" {
+		t.Fatalf("DropWebOverride 后锁字段丢失: %q", got)
 	}
 }
