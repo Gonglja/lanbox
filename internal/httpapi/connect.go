@@ -83,6 +83,19 @@ func (s *Server) connectInfo(r *http.Request) ConnectInfo {
 			add("https://"+host+suffix, "本机地址", kindInterface)
 		}
 	}
+	if s.ifaceAddrs != nil {
+		for _, raw := range s.ifaceAddrs() {
+			ip := net.ParseIP(strings.TrimSpace(raw))
+			if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+				continue
+			}
+			host := ip.String()
+			if ip.To4() == nil {
+				host = "[" + host + "]"
+			}
+			add("https://"+host+suffix, "本机地址", kindInterface)
+		}
+	}
 	for _, iface := range interfaceURLs(suffix) {
 		add(iface[1], iface[0], kindInterface)
 	}

@@ -18,3 +18,7 @@ android/app/build/
 android/local.properties
 android/keystore.properties
 android/*.jks
+
+# 本机构建产物
+/lanbox.exe
+/lanbox-cli.exe

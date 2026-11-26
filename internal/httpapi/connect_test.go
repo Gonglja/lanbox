@@ -180,3 +180,35 @@ func TestDiscoverEmptyResultShape(t *testing.T) {
 	}
 	_ = time.Second
 }
+
+// TestConnectInfoUsesHostAddrs 覆盖 Android 场景：Go 枚举不到网卡，
+// 由宿主（Kotlin）把 WiFi IPv4 传进来，connect 卡片必须有这条「本机地址」。
+func TestConnectInfoUsesHostAddrs(t *testing.T) {
+	e := newEnvWith(t, func(o *httpapi.Options) {
+		o.IfaceAddrs = func() []string { return []string{"192.168.1.23", "127.0.0.1", "fe80::1"} }
+	})
+	e.loginAdmin(t)
+	resp, body := e.do(t, e.newJSONReq(t, http.MethodGet, "/api/connect", nil))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("应 200，得到 %d %s", resp.StatusCode, body)
+	}
+	var info httpapi.ConnectInfo
+	if err := json.Unmarshal(body, &info); err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	var found bool
+	for _, u := range info.URLs {
+		if strings.Contains(u.URL, "192.168.1.23") && u.Kind == "interface" {
+			found = true
+		}
+		if strings.Contains(u.URL, "127.0.0.1") && u.Kind == "interface" {
+			t.Fatalf("回环地址不应作为 interface 出现: %+v", u)
+		}
+		if strings.Contains(u.URL, "fe80") {
+			t.Fatalf("链路本地地址不应出现: %+v", u)
+		}
+	}
+	if !found {
+		t.Fatalf("缺少宿主提供的 192.168.1.23: %s", body)
+	}
+}
