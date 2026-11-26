@@ -7,6 +7,8 @@
 #   make windows    只编 Windows 的 exe（amd64/arm64，服务端 + CLI + 客户端）
 #   make agent      只编 Windows 客户端（lanbox-agent，含托盘与剪贴板监听）
 #   make client     把纯 web 客户端打成单文件 dist/lanbox-client.html
+#   make android    打 Android APK（需 JAVA_HOME=JDK17-21 + SDK35 + NDK27）
+#   make android-keystore 生成侧载签名（只需一次）
 #   make test       跑全部测试
 #   make check      gofmt + go vet + test（提交前自检）
 #   make clean      清掉 dist/ 与本机二进制
@@ -23,6 +25,10 @@ AGENT_CMD := ./cmd/lanbox-agent
 AGENT_TAGS := desktop,production
 AGENT_LDFLAGS = $(LDFLAGS) -H=windowsgui
 DIST     := dist
+ANDROID_SDK ?= $(HOME)/AppData/Local/Android/Sdk
+ANDROID_NDK ?= $(ANDROID_SDK)/ndk/27.0.12077973
+ANDROID_SO  := android/app/src/main/jniLibs/arm64-v8a/liblanbox.so
+ANDROID_GO  := ./mobile/jni
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 GOFLAGS  := -trimpath
 LDFLAGS  := -s -w -X main.version=$(VERSION)
@@ -42,7 +48,7 @@ endif
 
 PREFIX ?= /usr/local
 
-.PHONY: all build dist windows agent client checksums test vet fmt check run install clean help
+.PHONY: all build dist windows agent client android android-keystore android-env checksums test vet fmt check run install clean help
 
 all: dist
 
@@ -107,10 +113,41 @@ else
 	@exit 1
 endif
 
+## android: 编 liblanbox.so 并打 release APK 到 dist/lanbox-android.apk
+android: android-env $(ANDROID_SO)
+	cd android && ./gradlew :app:assembleRelease
+	@if [ -f android/keystore.properties ]; then 		cp android/app/build/outputs/apk/release/app-release.apk $(DIST)/lanbox-android.apk; 		echo "已生成 $(DIST)/lanbox-android.apk"; 	else 		cp android/app/build/outputs/apk/release/app-release.apk $(DIST)/lanbox-android-debug.apk; 		echo "warn: 没有 android/keystore.properties，用 debug 签名生成 $(DIST)/lanbox-android-debug.apk（无法覆盖安装正式版）"; 	fi
+
+## android-keystore: 生成侧载用的固定签名（只需一次，务必备份 jks 与密码）
+android-keystore:
+	@test -f android/lanbox-release.jks && { echo "android/lanbox-release.jks 已存在，拒绝覆盖"; exit 1; } || true
+	keytool -genkeypair -v -keystore android/lanbox-release.jks -alias lanbox 	  -keyalg RSA -keysize 2048 -validity 10000 	  -storepass lanbox123 -keypass lanbox123 	  -dname "CN=lanbox, O=lanbox"
+	@printf 'storeFile=lanbox-release.jks
+storePassword=lanbox123
+keyAlias=lanbox
+keyPassword=lanbox123
+' > android/keystore.properties
+	@echo "已生成 android/lanbox-release.jks 与 android/keystore.properties（两者都要备份）"
+
 ## client: 把纯 web 客户端（client/）打成单文件 dist/lanbox-client.html
 client:
 	@mkdir -p $(DIST)
 	go run ./tools/buildclient -root . -out $(DIST)/lanbox-client.html
+
+# NDK 自带 clang 的宿主标签（Windows/MSYS 下是 windows-x86_64）
+NDK_HOST_TAG := $(shell uname -s | sed -e 's/^MINGW.*/windows-x86_64/' -e 's/^MSYS.*/windows-x86_64/' -e 's/^CYGWIN.*/windows-x86_64/' -e 's/^Linux/linux-x86_64/' -e 's/^Darwin/darwin-x86_64/')
+ANDROID_CC := $(ANDROID_NDK)/toolchains/llvm/prebuilt/$(NDK_HOST_TAG)/bin/aarch64-linux-android26-clang
+
+## android-env: 检查 Android 构建前置，缺什么报什么
+android-env:
+	@test -n "$(JAVA_HOME)" || { echo "缺少 JAVA_HOME（需要 JDK 17–21）"; exit 1; }
+	@test -d "$(ANDROID_SDK)/platforms/android-35" || { echo "缺少 SDK Platform 35（$(ANDROID_SDK)/platforms/android-35）"; exit 1; }
+	@test -d "$(ANDROID_NDK)" || { echo "缺少 NDK（$(ANDROID_NDK)）"; exit 1; }
+	@echo "Android 环境就绪：JAVA_HOME=$(JAVA_HOME) NDK=$(ANDROID_NDK) clang=$(NDK_HOST_TAG)"
+
+$(ANDROID_SO): $(shell find mobile internal -name '*.go') go.mod
+	@mkdir -p $(dir $@)
+	CGO_ENABLED=1 GOOS=android GOARCH=arm64 CC="$(ANDROID_CC)" 	  go build -buildmode=c-shared -trimpath -ldflags "-s -w" -o $@ $(ANDROID_GO)
 
 ## checksums: 生成并打印 dist/SHA256SUMS
 checksums:
