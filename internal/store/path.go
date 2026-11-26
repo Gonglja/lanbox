@@ -24,15 +24,13 @@ func SanitizeRelPath(raw string) (string, error) {
 	}
 	segs := make([]string, 0, 8)
 	for _, seg := range strings.Split(p, "/") {
+		// 先清洗再判定：否则 " .."、".\x00." 这类输入清洗后会重组出 ".."。
+		seg = cleanSegment(seg)
 		switch seg {
 		case "", ".":
 			continue
 		case "..":
 			return "", ErrBadPath
-		}
-		seg = cleanSegment(seg)
-		if seg == "" {
-			continue
 		}
 		if len([]rune(seg)) > maxSegmentRunes {
 			return "", ErrBadPath
@@ -64,7 +62,7 @@ func cleanSegment(seg string) string {
 	return strings.TrimSpace(b.String())
 }
 
-// isWindowsAbs 判断是否是盘符形式的绝对路径（C: / c:/x）。
+// isWindowsAbs 判断是否是盘符形式的绝对路径（C:/x、c:/x）。
 // 盘符后必须紧跟分隔符：否则 "a:b.txt" 这类普通文件名会被误判为绝对路径。
 func isWindowsAbs(p string) bool {
 	if len(p) < 3 || p[1] != ':' || p[2] != '/' {
