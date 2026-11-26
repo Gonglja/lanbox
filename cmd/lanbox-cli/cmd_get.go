@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,16 +12,16 @@ import (
 
 // cmdGet 下载某条内容的附件或整条 zip。
 func cmdGet(ctx context.Context, g *globals, args []string) error {
-	fs := flag.NewFlagSet("get", flag.ContinueOnError)
-	fs.SetOutput(g.stderr)
+	fs := g.subFS("get")
 	out := fs.String("o", ".", "下载到哪个目录")
 	zipPath := fs.String("zip", "", "下载整条内容为 zip 文件")
 	force := fs.Bool("force", false, "覆盖已存在的文件")
 	resume := fs.Bool("resume", false, "单文件断点续传")
-	if err := fs.Parse(flagsFirst(args, "-o", "--zip")); err != nil {
-		return errUsage
+	pos, err := parseArgs(fs, args)
+	if err != nil {
+		return err
 	}
-	if fs.NArg() != 1 {
+	if len(pos) != 1 {
 		return fmt.Errorf("%w: 用法 lanbox-cli get <ID> [-o 目录] [--zip 文件]", errUsage)
 	}
 	if *zipPath != "" && *resume {
@@ -32,7 +31,7 @@ func cmdGet(ctx context.Context, g *globals, args []string) error {
 	if err != nil {
 		return err
 	}
-	it, err := c.GetItem(ctx, fs.Arg(0))
+	it, err := c.GetItem(ctx, pos[0])
 	if err != nil {
 		return err
 	}

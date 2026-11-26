@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 
 	"lanbox/internal/client"
@@ -10,14 +9,13 @@ import (
 
 // cmdLs 列出内容，-o 时同时打印附件表。
 func cmdLs(ctx context.Context, g *globals, args []string) error {
-	fs := flag.NewFlagSet("ls", flag.ContinueOnError)
-	fs.SetOutput(g.stderr)
+	fs := g.subFS("ls")
 	limit := fs.Int("n", 20, "返回条数")
 	search := fs.String("q", "", "按文本/文件名搜索")
 	todo := fs.Bool("todo", false, "只看未取走")
 	withFiles := fs.Bool("o", false, "同时打印附件")
-	if err := fs.Parse(flagsFirst(args, "-n", "-q")); err != nil {
-		return errUsage
+	if _, err := parseArgs(fs, args); err != nil {
+		return err
 	}
 	c, _, err := newClient(g)
 	if err != nil {
@@ -58,14 +56,19 @@ func cmdLs(ctx context.Context, g *globals, args []string) error {
 
 // cmdFiles 列出某条内容的附件。
 func cmdFiles(ctx context.Context, g *globals, args []string) error {
-	if len(args) != 1 {
+	fs := g.subFS("files")
+	pos, err := parseArgs(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 1 {
 		return fmt.Errorf("%w: 用法 lanbox-cli files <ID>", errUsage)
 	}
 	c, _, err := newClient(g)
 	if err != nil {
 		return err
 	}
-	it, err := c.GetItem(ctx, args[0])
+	it, err := c.GetItem(ctx, pos[0])
 	if err != nil {
 		return err
 	}

@@ -30,13 +30,15 @@ const (
 // errUsage 表示参数用法错误。
 var errUsage = errors.New("用法错误")
 
+// errAuth 表示认证或会话问题（未登录、会话过期、会话与目标地址不匹配）。
+var errAuth = errors.New("认证/会话问题")
+
 // globals 是全部子命令共享的选项。
 type globals struct {
 	server   string
 	json     bool
 	insecure bool
 	caFile   string
-	verbose  bool
 	stdout   io.Writer
 	stderr   io.Writer
 }
@@ -45,33 +47,35 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
 func run(args []string, stdout, stderr io.Writer) int {
 	g := &globals{stdout: stdout, stderr: stderr}
-	// 全局选项允许写在子命令后面，先挑出来再解析。
-	globalArgs, rest := splitGlobals(args)
-	fs := flag.NewFlagSet("lanbox-cli", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.StringVar(&g.server, "s", "", "服务地址，如 https://192.168.1.9:8443")
-	fs.BoolVar(&g.json, "json", false, "输出机器可读 JSON")
-	fs.BoolVar(&g.insecure, "insecure", false, "跳过 TLS 证书校验（不安全）")
-	fs.StringVar(&g.caFile, "ca", "", "信任指定的 PEM 证书文件")
-	fs.BoolVar(&g.verbose, "v", false, "打印请求细节")
-	if err := fs.Parse(globalArgs); err != nil {
+	fs := g.globalFS("lanbox-cli", stderr)
+	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
+		usage(stdout)
+		return exitOK
+	}
+	// 第一个非选项参数是子命令；它之前的选项归全局。
+	idx, err := splitCommand(fs, args)
+	if err != nil {
+		fmt.Fprintln(stderr, "错误:", err)
 		return exitUsage
 	}
-	if len(rest) == 0 {
+	if _, err := parseArgs(fs, args[:idx]); err != nil {
+		fmt.Fprintln(stderr, "错误:", err)
+		return exitUsage
+	}
+	if idx >= len(args) {
 		usage(stderr)
 		return exitUsage
 	}
 
-	cmd, cmdArgs := rest[0], rest[1:]
+	cmd, cmdArgs := args[idx], args[idx+1:]
 	ctx := context.Background()
-	var err error
 	switch cmd {
 	case "login":
 		err = cmdLogin(ctx, g, cmdArgs, os.Stdin)
 	case "logout":
-		err = cmdLogout(ctx, g)
+		err = cmdLogout(ctx, g, cmdArgs)
 	case "whoami":
-		err = cmdWhoami(ctx, g)
+		err = cmdWhoami(ctx, g, cmdArgs)
 	case "put":
 		err = cmdPut(ctx, g, cmdArgs, os.Stdin)
 	case "ls":
@@ -86,7 +90,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = cmdRm(ctx, g, cmdArgs)
 	case "rm-file":
 		err = cmdRmFile(ctx, g, cmdArgs)
-	case "help", "-h", "--help":
+	case "help":
 		usage(stdout)
 		return exitOK
 	default:
@@ -104,6 +108,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		if errors.Is(err, errUsage) {
 			return exitUsage
 		}
+		if errors.Is(err, errAuth) {
+			return exitAuth
+		}
 		if isNetworkErr(err) {
 			return exitNetwork
 		}
@@ -112,15 +119,29 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return exitOK
 }
 
+// globalFS 建立注册了全部全局选项的 FlagSet。
+// 子命令的 FlagSet 也用它，这样 login -s URL、put x --json 都能生效。
+func (g *globals) globalFS(name string, out io.Writer) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(out)
+	fs.StringVar(&g.server, "s", g.server, "服务地址，如 https://192.168.1.9:8443")
+	fs.BoolVar(&g.json, "json", g.json, "输出机器可读 JSON")
+	fs.BoolVar(&g.insecure, "insecure", g.insecure, "跳过 TLS 证书校验（不安全）")
+	fs.StringVar(&g.caFile, "ca", g.caFile, "信任指定的 PEM 证书文件")
+	return fs
+}
+
+// subFS 建立子命令的 FlagSet，并注册全部全局选项。
+func (g *globals) subFS(name string) *flag.FlagSet { return g.globalFS(name, g.stderr) }
+
 func usage(w io.Writer) {
 	fmt.Fprint(w, `用法: lanbox-cli [全局选项] <命令> [参数]
 
-全局选项:
+全局选项（可写在子命令前后）:
   -s URL        服务地址（也可用 LANBOX_URL）
   -json         输出 JSON
   -insecure     跳过 TLS 校验（不推荐）
   -ca FILE      信任指定 PEM 证书
-  -v            打印请求细节
 
 命令:
   login [-u 用户名]        登录并保存会话
@@ -133,7 +154,28 @@ func usage(w io.Writer) {
   taken ID [--undo]        标记/取消已取走
   rm ID                    删除整条内容
   rm-file ID FID           删除单个附件
+
+用 -- 结束选项解析，其后的参数一律当作路径，例如 put -r -- -s。
 `)
+}
+
+// resolveServer 按 -s > LANBOX_URL > 会话文件的顺序确定目标服务地址。
+// 显式地址与会话里的地址不一致时属于会话问题，提示重新登录。
+func resolveServer(g *globals, sess *client.Session) (string, error) {
+	explicit := strings.TrimRight(g.server, "/")
+	if explicit == "" {
+		explicit = strings.TrimRight(os.Getenv("LANBOX_URL"), "/")
+	}
+	if explicit != "" {
+		if sess != nil && sess.URL != "" && explicit != strings.TrimRight(sess.URL, "/") {
+			return "", fmt.Errorf("%w: 会话属于 %s，请先运行 lanbox-cli login -s %s", errAuth, sess.URL, explicit)
+		}
+		return explicit, nil
+	}
+	if sess != nil && sess.URL != "" {
+		return sess.URL, nil
+	}
+	return "", fmt.Errorf("%w: 请用 -s 指定服务地址，例如 -s https://192.168.1.9:8443", errUsage)
 }
 
 // newClient 读取会话并按全局选项组装客户端。
@@ -142,15 +184,15 @@ func newClient(g *globals) (*client.Client, *client.Session, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	if g.server != "" && strings.TrimRight(g.server, "/") != sess.URL {
-		return nil, nil, fmt.Errorf("会话属于 %s，请先运行 lanbox-cli login -s %s",
-			sess.URL, strings.TrimRight(g.server, "/"))
+	base, err := resolveServer(g, sess)
+	if err != nil {
+		return nil, nil, err
 	}
 	httpc, err := httpClient(g)
 	if err != nil {
 		return nil, nil, err
 	}
-	c, err := client.New(client.Options{BaseURL: sess.URL, SID: sess.SID, HTTP: httpc})
+	c, err := client.New(client.Options{BaseURL: base, SID: sess.SID, HTTP: httpc})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -194,18 +236,15 @@ func isNetworkErr(err error) bool {
 }
 
 func cmdLogin(ctx context.Context, g *globals, args []string, stdin *os.File) error {
-	fs := flag.NewFlagSet("login", flag.ContinueOnError)
-	fs.SetOutput(g.stderr)
+	fs := g.subFS("login")
 	user := fs.String("u", "admin", "用户名")
-	if err := fs.Parse(args); err != nil {
-		return errUsage
+	if _, err := parseArgs(fs, args); err != nil {
+		return err
 	}
-	server := g.server
-	if server == "" {
-		server = os.Getenv("LANBOX_URL")
-	}
-	if server == "" {
-		return fmt.Errorf("%w: 请用 -s 指定服务地址，例如 -s https://192.168.1.9:8443", errUsage)
+	// login 只认显式地址：此时还没有会话文件可参考。
+	server, err := resolveServer(g, nil)
+	if err != nil {
+		return err
 	}
 	pw, err := readPassword(stdin, g.stderr)
 	if err != nil {
@@ -229,7 +268,11 @@ func cmdLogin(ctx context.Context, g *globals, args []string, stdin *os.File) er
 	return nil
 }
 
-func cmdLogout(ctx context.Context, g *globals) error {
+func cmdLogout(ctx context.Context, g *globals, args []string) error {
+	fs := g.subFS("logout")
+	if _, err := parseArgs(fs, args); err != nil {
+		return err
+	}
 	c, sess, err := newClient(g)
 	if err != nil {
 		return err
@@ -244,7 +287,11 @@ func cmdLogout(ctx context.Context, g *globals) error {
 	return nil
 }
 
-func cmdWhoami(ctx context.Context, g *globals) error {
+func cmdWhoami(ctx context.Context, g *globals, args []string) error {
+	fs := g.subFS("whoami")
+	if _, err := parseArgs(fs, args); err != nil {
+		return err
+	}
 	c, sess, err := newClient(g)
 	if err != nil {
 		return err

@@ -58,7 +58,7 @@ func loadSession() (*client.Session, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("尚未登录，请先运行 lanbox-cli login -s <地址>")
+			return nil, fmt.Errorf("%w: 尚未登录，请先运行 lanbox-cli login -s <地址>", errAuth)
 		}
 		return nil, fmt.Errorf("读取会话失败: %w", err)
 	}

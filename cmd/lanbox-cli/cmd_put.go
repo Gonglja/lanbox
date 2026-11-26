@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -10,32 +9,50 @@ import (
 	"lanbox/internal/client"
 )
 
+// maxStdinText 是标准输入文本的上限：1MiB，远大于服务端默认 64KiB 文本上限。
+const maxStdinText = 1 << 20
+
 // cmdPut 发布文字与/或文件、目录。
 func cmdPut(ctx context.Context, g *globals, args []string, stdin *os.File) error {
-	fs := flag.NewFlagSet("put", flag.ContinueOnError)
-	fs.SetOutput(g.stderr)
+	fs := g.subFS("put")
 	text := fs.String("m", "", "随附件一起发布的文字")
 	recursive := fs.Bool("r", false, "递归上传目录")
-	if err := fs.Parse(flagsFirst(args, "-m")); err != nil {
-		return errUsage
+	pos, err := parseArgs(fs, args)
+	if err != nil {
+		return err
 	}
 
-	body := *text
-	var files []client.Upload
-	filePaths := make([]string, 0, len(fs.Args()))
-	for _, p := range fs.Args() {
+	// "-" 表示从标准输入读文本，只能出现一次，且不能与 -m 同时使用。
+	dashCount := 0
+	filePaths := make([]string, 0, len(pos))
+	for _, p := range pos {
 		if p == "-" {
-			raw, err := io.ReadAll(io.LimitReader(stdin, 1<<20))
-			if err != nil {
-				return fmt.Errorf("读取标准输入失败: %w", err)
-			}
-			if body == "" {
-				body = string(raw)
-			}
+			dashCount++
 			continue
 		}
 		filePaths = append(filePaths, p)
 	}
+	if dashCount > 1 {
+		return fmt.Errorf("%w: 只能出现一个 -", errUsage)
+	}
+	if dashCount == 1 && *text != "" {
+		return fmt.Errorf("%w: -m 与 - 不能同时使用", errUsage)
+	}
+
+	body := *text
+	if dashCount == 1 {
+		// 多读一个字节就能判断是否超限，避免静默截断用户输入。
+		raw, err := io.ReadAll(io.LimitReader(stdin, maxStdinText+1))
+		if err != nil {
+			return fmt.Errorf("读取标准输入失败: %w", err)
+		}
+		if len(raw) > maxStdinText {
+			return fmt.Errorf("%w: 标准输入超过 %d 字节上限，请改用 -m 或文件上传", errUsage, maxStdinText)
+		}
+		body = string(raw)
+	}
+
+	var files []client.Upload
 	if len(filePaths) > 0 {
 		ups, err := collectUploads(filePaths, *recursive)
 		if err != nil {

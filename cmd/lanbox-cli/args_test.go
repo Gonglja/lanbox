@@ -2,32 +2,87 @@ package main
 
 import (
 	"bytes"
-	"strings"
+	"flag"
 	"testing"
 )
 
-// TestSplitGlobals 断言全局选项写在子命令前后都能被识别。
-func TestSplitGlobals(t *testing.T) {
-	globals, rest := splitGlobals([]string{"-s", "https://a", "login", "-u", "admin"})
-	if strings.Join(globals, "|") != "-s|https://a" {
-		t.Fatalf("子命令前的全局选项提取错: %v", globals)
+// TestParseArgsInterspersed 断言选项可以写在位置参数之后，且布尔选项不吞值。
+func TestParseArgsInterspersed(t *testing.T) {
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	out := fs.String("o", ".", "")
+	force := fs.Bool("force", false, "")
+	pos, err := parseArgs(fs, []string{"ID1", "-o", "dir", "--force"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if strings.Join(rest, "|") != "login|-u|admin" {
-		t.Fatalf("其余参数错: %v", rest)
+	if len(pos) != 1 || pos[0] != "ID1" || *out != "dir" || !*force {
+		t.Fatalf("解析不对: %v %q %v", pos, *out, *force)
 	}
+}
 
-	globals, rest = splitGlobals([]string{"login", "-s", "https://a", "-insecure", "-u", "admin"})
-	if strings.Join(globals, "|") != "-s|https://a|-insecure" {
-		t.Fatalf("子命令后的全局选项提取错: %v", globals)
+// TestParseArgsDoubleDash 断言 "--" 之后的参数原样作为位置参数。
+func TestParseArgsDoubleDash(t *testing.T) {
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	rec := fs.Bool("r", false, "")
+	pos, err := parseArgs(fs, []string{"-r", "--", "-s", "file"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if strings.Join(rest, "|") != "login|-u|admin" {
-		t.Fatalf("子命令自己的选项应留在原处: %v", rest)
+	if !*rec || len(pos) != 2 || pos[0] != "-s" || pos[1] != "file" {
+		t.Fatalf("-- 之后应原样保留: %v", pos)
 	}
+}
 
-	// -s=值 的写法不能被拆开。
-	globals, _ = splitGlobals([]string{"whoami", "-s=https://a"})
-	if strings.Join(globals, "|") != "-s=https://a" {
-		t.Fatalf("-s=值 提取错: %v", globals)
+// TestParseArgsDashValue 断言取值以 - 开头时仍被当作值，而不是新选项。
+func TestParseArgsDashValue(t *testing.T) {
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	fs.String("m", "", "")
+	if _, err := parseArgs(fs, []string{"-m", "-s"}); err != nil {
+		t.Fatalf("-m 的取值以 - 开头应被接受: %v", err)
+	}
+}
+
+// TestParseArgsUnknownFlag 断言未知选项报错。
+func TestParseArgsUnknownFlag(t *testing.T) {
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	if _, err := parseArgs(fs, []string{"-nope"}); err == nil {
+		t.Fatal("未知选项应报错")
+	}
+}
+
+// TestParseArgsMissingValue 断言非布尔选项缺值时报错。
+func TestParseArgsMissingValue(t *testing.T) {
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	fs.String("o", "", "")
+	if _, err := parseArgs(fs, []string{"-o"}); err == nil {
+		t.Fatal("缺值应报错")
+	}
+}
+
+// TestParseArgsEqualsForm 断言 -name=value / --name=value 按等号拆分。
+func TestParseArgsEqualsForm(t *testing.T) {
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	out := fs.String("o", ".", "")
+	rec := fs.Bool("r", false, "")
+	pos, err := parseArgs(fs, []string{"--o=/tmp/x", "-r=true", "tail"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *out != "/tmp/x" || !*rec || len(pos) != 1 || pos[0] != "tail" {
+		t.Fatalf("等号写法的解析不对: %q %v %v", *out, *rec, pos)
+	}
+}
+
+// TestParseArgsSingleDashIsPositional 断言单独的 "-" 是位置参数（标准输入约定）。
+func TestParseArgsSingleDashIsPositional(t *testing.T) {
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	fs.Bool("r", false, "")
+	pos, err := parseArgs(fs, []string{"-", "-r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pos) != 1 || pos[0] != "-" {
+		t.Fatalf("- 应作为位置参数保留: %v", pos)
 	}
 }
 
@@ -43,13 +98,21 @@ func TestRunAcceptsGlobalsAfterCommand(t *testing.T) {
 	}
 }
 
-// TestSplitGlobalsDoubleDashJSON 断言 --json 与 -json 等价。
-func TestSplitGlobalsDoubleDashJSON(t *testing.T) {
-	globals, rest := splitGlobals([]string{"-ca", "ca.pem", "ls", "-q", "关键词", "--json"})
-	if strings.Join(globals, "|") != "-ca|ca.pem|--json" {
-		t.Fatalf("全局选项提取错: %v", globals)
+// TestRunGlobalsBeforeCommand 断言子命令之前的全局选项也生效。
+func TestRunGlobalsBeforeCommand(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("LANBOX_PASSWORD", "x")
+	var out, errOut bytes.Buffer
+	code := run([]string{"-insecure", "-s", "https://127.0.0.1:1", "login"}, &out, &errOut)
+	if code != exitNetwork {
+		t.Fatalf("应返回 exitNetwork(%d)，得到 %d：%s", exitNetwork, code, errOut.String())
 	}
-	if strings.Join(rest, "|") != "ls|-q|关键词" {
-		t.Fatalf("其余参数错: %v", rest)
+}
+
+// TestRunUnknownGlobalFlagIsUsage 断言子命令之前的未知选项报用法错误。
+func TestRunUnknownGlobalFlagIsUsage(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := run([]string{"-nope", "ls"}, &out, &errOut); code != exitUsage {
+		t.Fatalf("未知全局选项应返回 exitUsage(%d)，得到 %d：%s", exitUsage, code, errOut.String())
 	}
 }

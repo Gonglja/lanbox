@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
-	"strings"
 	"testing"
 )
 
@@ -24,26 +24,68 @@ func TestPutWithoutSessionAsksLogin(t *testing.T) {
 	var out, errOut bytes.Buffer
 	g := &globals{stdout: &out, stderr: &errOut}
 	err := cmdPut(context.Background(), g, []string{"-m", "hi"}, os.Stdin)
-	if err == nil || !strings.Contains(err.Error(), "尚未登录") {
-		t.Fatalf("应提示尚未登录，得到 %v", err)
+	if err == nil || !errors.Is(err, errAuth) {
+		t.Fatalf("应返回认证错误（尚未登录），得到 %v", err)
 	}
 }
 
-// TestFlagsFirst 断言写在位置参数后面的选项也会被移到前面。
-func TestFlagsFirst(t *testing.T) {
-	got := flagsFirst([]string{"ID", "-o", "目录", "--resume"}, "-o", "--zip")
-	want := []string{"-o", "目录", "--resume", "ID"}
-	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("重排结果不对: %v，期望 %v", got, want)
+// TestPutRejectsOversizedStdin 断言超长标准输入直接报用法错误，而不是静默截断。
+func TestPutRejectsOversizedStdin(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "in")
+	if err != nil {
+		t.Fatal(err)
 	}
-	// 不占值的布尔选项不能吞掉后面的位置参数。
-	got = flagsFirst([]string{"ID", "--undo"}, "-o")
-	if strings.Join(got, "|") != "--undo|ID" {
-		t.Fatalf("布尔选项重排不对: %v", got)
+	if _, err := f.Write(bytes.Repeat([]byte("a"), maxStdinText+1)); err != nil {
+		t.Fatal(err)
 	}
-	// 没有位置参数时保持原样。
-	got = flagsFirst([]string{"-n", "5"}, "-n")
-	if strings.Join(got, "|") != "-n|5" {
-		t.Fatalf("纯选项应保持原样: %v", got)
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	g := &globals{stdout: io.Discard, stderr: io.Discard}
+	if err := cmdPut(context.Background(), g, []string{"-"}, f); !errors.Is(err, errUsage) {
+		t.Fatalf("超长 stdin 应返回 errUsage，得到 %v", err)
+	}
+}
+
+// TestPutRejectsTextFlagWithStdin 断言 -m 与 - 同时给出是用法错误。
+func TestPutRejectsTextFlagWithStdin(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "in")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString("x")
+	f.Seek(0, io.SeekStart)
+	g := &globals{stdout: io.Discard, stderr: io.Discard}
+	if err := cmdPut(context.Background(), g, []string{"-m", "文字", "-"}, f); !errors.Is(err, errUsage) {
+		t.Fatalf("-m 与 - 同给应报用法错误，得到 %v", err)
+	}
+}
+
+// TestPutRejectsMultipleStdin 断言 "-" 只能出现一次。
+func TestPutRejectsMultipleStdin(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "in")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString("x")
+	f.Seek(0, io.SeekStart)
+	g := &globals{stdout: io.Discard, stderr: io.Discard}
+	if err := cmdPut(context.Background(), g, []string{"-", "-"}, f); !errors.Is(err, errUsage) {
+		t.Fatalf("多个 - 应报用法错误，得到 %v", err)
+	}
+}
+
+// TestPutDoubleDashKeepsDashPaths 断言 "--" 之后以 - 开头的路径被当作文件名。
+func TestPutDoubleDashKeepsDashPaths(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	var out, errOut bytes.Buffer
+	g := &globals{stdout: &out, stderr: &errOut}
+	// 文件不存在应报读取错误，而不是"未知选项 -s"或"-m 缺值"。
+	err := cmdPut(context.Background(), g, []string{"--", "-s"}, os.Stdin)
+	if err == nil {
+		t.Fatal("不存在的文件应报错")
+	}
+	if errors.Is(err, errUsage) {
+		t.Fatalf("-- 之后的 -s 应是文件路径，得到用法错误: %v", err)
 	}
 }
