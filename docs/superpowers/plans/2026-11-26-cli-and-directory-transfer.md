@@ -4095,3 +4095,23 @@ git commit -m "build: 交叉编译 CLI，README 补充客户端与目录传输�
 | §10/§11 不做与兼容 | Task 2、Task 3、Task 13 |
 
 **类型一致性检查：** `AddFile(itemID, relPath string, declaredSize int64, r io.Reader)`（Task 3）在 Task 5 的调用处一致；`client.Upload{Path, Size, Open}`（Task 8）在 Task 11 的 `newUpload` 一致；`client.DownloadOptions{Dest, Force, Resume, OnProgress}`（Task 9）在 Task 11 一致；`collectUploads(paths, recursive)`（Task 11）在测试与 `cmd_put.go` 一致。
+
+## 实现偏差记录
+
+实现过程中对计划/规格的修订，均已同步到代码与测试：
+
+| 偏差 | 原因 | 落地 |
+|---|---|---|
+| `isWindowsAbs` 要求盘符后紧跟 `/` | 原判定把 `a:b.txt` 误判为绝对路径，与测试冲突 | `internal/store/path.go`，规格 §4.2 已同步 |
+| `SanitizeRelPath` 改为「先清洗再判 `..`」 | 原顺序会让 `" .."`、`".\x00./x"` 清洗后重组出 `..` 逃逸 | `internal/store/path.go` + 3 条回归用例 |
+| 增加字节上限前置检查与深度提前失败 | 字段名最长 10MiB，原实现会先切段放大内存（实测 1MiB → 56MiB） | `internal/store/path.go` + 压测用例 |
+| 新增 `diskName(f File)` 单一真源 | 读/写/删三处各自拼 `<fid>__<name>`，`DeleteFile` 缺兜底导致孤儿文件 | Task 3a |
+| `Store.MaxFiles()` / `Store.MaxItemBytes()` 导出 | HTTP 层错误文案要跟随配置，不能硬编码 500 / cfg 镜像 | `internal/store/files.go` |
+| `Options.MaxItemBytes == 0` 回落到 `DefaultMaxItemBytes` | 原语义「0 表示不限」会静默关闭 2GiB 保护 | `internal/store/files.go` |
+| zip 下载先预检所有附件再写响应头 | 否则附件缺失会返回 200 + 截断包 | `internal/httpapi/zip_handlers.go` |
+| `client.DownloadZip` 增加 `force` 参数 | 原实现无条件覆盖，与 `--force` 语义冲突 | `internal/client/get.go` |
+| CLI 新增 `parseArgs`（选项与位置参数交错、支持 `--`） | Go 的 `flag` 遇到位置参数即停止解析，`get <ID> -o dir` 不可用 | `cmd/lanbox-cli/args.go` |
+| CLI 会话文件改用「临时文件 + rename」并收紧已存在目录权限 | 原实现非原子且对已存在 0755 目录不生效 | `cmd/lanbox-cli/session.go` |
+| 移除 `-v` | 只解析未实现，属空功能 | `cmd/lanbox-cli/main.go` |
+| 「超过 500 个文件」提示并入 `refreshPending` | 单独调用会被 `refreshPending` 覆盖，成死代码 | `web/main.js` |
+| 网页端待上传列表显示 `relPath` | 否则同名文件无法区分 | `web/main.js` |
