@@ -120,6 +120,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/password", s.withAuth(s.handleChangePassword))
 
 	// 连接信息与二维码（发给用户自己的手机/另一台电脑），以及局域网发现
+	s.mux.HandleFunc("GET /__app/login", s.handleLoopbackLogin)
 	s.mux.HandleFunc("GET /api/connect", s.withAuth(s.handleConnect))
 	s.mux.HandleFunc("GET /api/connect/qr.svg", s.withAuth(s.handleConnectQR))
 	s.mux.HandleFunc("GET /api/discover", s.withAuth(s.handleDiscover))
