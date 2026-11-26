@@ -50,11 +50,11 @@ func TestDownloadOK(t *testing.T) {
 	u := newTestUpdater(t, Options{Current: "1.0.0", Asset: "lanbox-linux-amd64"})
 
 	var lastDone, lastTotal int64
-	u.opts.Progress = func(done, total int64) { lastDone, lastTotal = done, total }
+	progress := func(done, total int64) { lastDone, lastTotal = done, total }
 
 	rel := Release{Version: "1.2.4", AssetName: "lanbox-linux-amd64", AssetURL: ts.URL + "/asset",
 		SHA256: shaOf(blob), Size: int64(len(blob))}
-	path, err := u.Download(context.Background(), dir, rel)
+	path, err := u.Download(context.Background(), dir, rel, progress)
 	if err != nil {
 		t.Fatalf("Download: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestDownloadFailures(t *testing.T) {
 			rel := base()
 			c.mutate(&rel)
 			u := newWith(rel)
-			_, err := u.Download(context.Background(), dir, rel)
+			_, err := u.Download(context.Background(), dir, rel, nil)
 			if err == nil {
 				t.Fatal("应该失败")
 			}
@@ -134,7 +134,7 @@ func TestDownloadRejectsHTML(t *testing.T) {
 	dir := t.TempDir()
 	u := newTestUpdater(t, Options{Current: "1.0.0", Asset: "lanbox-linux-amd64"})
 	rel := Release{Version: "1.2.4", AssetName: "lanbox-linux-amd64", AssetURL: ts.URL + "/asset", SHA256: shaOf(html)}
-	_, err := u.Download(context.Background(), dir, rel)
+	_, err := u.Download(context.Background(), dir, rel, nil)
 	if err == nil || !strings.Contains(err.Error(), "可执行文件") {
 		t.Fatalf("期望魔数错误，得到 %v", err)
 	}
@@ -150,7 +150,7 @@ func TestDownloadContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	rel := Release{Version: "1.2.4", AssetName: "lanbox-linux-amd64", AssetURL: ts.URL + "/asset", SHA256: shaOf(blob)}
-	if _, err := u.Download(ctx, t.TempDir(), rel); err == nil {
+	if _, err := u.Download(ctx, t.TempDir(), rel, nil); err == nil {
 		t.Fatal("取消后应该失败")
 	}
 }

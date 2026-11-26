@@ -34,7 +34,7 @@ func tempName(version string) string {
 
 // Download 把 Release 的资产下载到 dir 下的临时文件，边下边算 SHA256，
 // 校验大小、摘要与二进制魔数。任何一步失败都会删掉临时文件并返回带阶段的错误。
-func (u *Updater) Download(ctx context.Context, dir string, r Release) (string, error) {
+func (u *Updater) Download(ctx context.Context, dir string, r Release, progress func(done, total int64)) (string, error) {
 	if r.AssetURL == "" {
 		return "", failf("download", "缺少下载地址")
 	}
@@ -78,10 +78,10 @@ func (u *Updater) Download(ctx context.Context, dir string, r Release) (string, 
 		return "", failf("permission", "无法写入 %s（程序目录不可写？）: %v", dir, err)
 	}
 	h := sha256.New()
-	rd := &progressReader{r: resp.Body, total: r.Size, fn: u.opts.Progress}
+	rd := &progressReader{r: resp.Body, total: r.Size, fn: progress}
 	n, err := io.Copy(io.MultiWriter(f, h), rd)
-	if err == nil && u.opts.Progress != nil {
-		u.opts.Progress(n, r.Size) // 收尾一定报一次，小文件也能看到 100%
+	if err == nil && progress != nil {
+		progress(n, r.Size) // 收尾一定报一次，小文件也能看到 100%
 	}
 	if cerr := f.Close(); err == nil {
 		err = cerr

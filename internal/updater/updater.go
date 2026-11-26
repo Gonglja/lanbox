@@ -35,8 +35,6 @@ type Options struct {
 	Token    string       // 私有仓库用，作为 Bearer token
 	Client   *http.Client // 可为 nil（默认带代理与 15s 超时）
 	Log      *log.Logger  // 可为 nil
-	// Progress 是下载进度回调（done/total 字节，total 未知时为 0），可为 nil。
-	Progress func(done, total int64)
 }
 
 // Release 是一次检查得到的远端版本信息。
