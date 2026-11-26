@@ -23,6 +23,9 @@ import (
 // errPinMismatch 表示服务端证书与固定的指纹不一致（可能是中间人）。
 var errPinMismatch = errors.New("服务端证书指纹与固定值不一致，已拒绝连接")
 
+// errNoPassword 表示没有保存密码，自动重连无从谈起。
+var errNoPassword = errors.New("未保存密码")
+
 // normalizeURL 补齐协议并去掉末尾斜杠。
 func normalizeURL(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)

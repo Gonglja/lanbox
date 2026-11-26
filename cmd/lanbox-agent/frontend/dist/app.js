@@ -151,17 +151,55 @@ const STATE_LABEL = {
   failed: '失败', canceled: '已取消', withdrawn: '已撤回',
 };
 
+// ---------- 断线重连 ----------
+// 后端每秒会用 state 事件推一次状态，next_retry_at 是 epoch 毫秒；
+// 倒计时在本地每秒重算一次，不靠后端推秒。
+
+function retryLeft() {
+  const at = Number((state && state.next_retry_at) || 0);
+  if (!at) return 0;
+  return Math.max(0, Math.round((at - Date.now()) / 1000));
+}
+
+function paintReconnectText() {
+  const text = $('reconnect-text');
+  if (!text || !state) return;
+  if (state.reconnect_stopped) {
+    text.textContent = '未连接到服务器：' + (state.reconnect_reason || '已停止自动重连') + '。';
+    return;
+  }
+  const left = retryLeft();
+  const nth = (state.reconnect_attempts || 0) + 1;
+  text.textContent = left > 0
+    ? '未连接到服务器，正在自动重连（下次 ' + left + 's 后，第 ' + nth + ' 次尝试）'
+    : '未连接到服务器，正在自动重连…';
+}
+
+function renderReconnect() {
+  const banner = $('reconnect-banner');
+  if (!banner) return;
+  const down = Boolean(state && (state.reconnecting || state.reconnect_stopped));
+  banner.hidden = !down;
+  if (!down) return;
+  banner.classList.toggle('is-stopped', Boolean(state.reconnect_stopped));
+  $('reconnect-login-btn').hidden = !state.reconnect_stopped;
+  paintReconnectText();
+}
+
 function renderState() {
   if (!state) return;
   const dot = $('status-dot');
   let cls = 'ok';
-  if (!state.logged_in) cls = 'err';
+  if (state.reconnect_stopped) cls = 'err';
+  else if (state.reconnecting) cls = 'warn';
+  else if (!state.logged_in) cls = 'err';
   else if (state.paused || !state.enabled) cls = 'warn';
   dot.className = 'dot ' + cls;
 
   const ver = String(state.version || '');
   $('version-label').textContent = (ver && ver !== 'dev') ? 'v' + ver.replace(/^v/, '') : '';
-  $('server-label').textContent = state.server || '未登录';
+  const server = state.server || '未登录';
+  $('server-label').textContent = server + (state.reconnecting ? ' · 重连中' : '');
   $('user-label').textContent = state.username ? '· ' + state.username : '';
   $('pause-btn').textContent = state.paused ? '恢复' : '暂停';
   $('logout-btn').title = state.username ? '退出登录（' + state.username + '）' : '退出登录';
@@ -169,8 +207,10 @@ function renderState() {
     ? (state.active > 0 ? '上传中 ' + state.active + ' 个，排队 ' + (state.queue - state.active) + ' 个' : '排队 ' + state.queue + ' 个')
     : '';
 
-  const hint = state.last_err || state.last_skip || '';
+  const hint = state.reconnect_stopped ? (state.reconnect_reason || state.last_err)
+    : (state.reconnecting ? (state.last_err || '正在自动重连') : (state.last_err || state.last_skip)) || '';
   $('server-label').title = hint;
+  renderReconnect();
 }
 
 function renderRecords() {
@@ -708,6 +748,7 @@ function bind() {
   $('pick-files-btn').addEventListener('click', doPickFiles);
   $('pick-folder-btn').addEventListener('click', doPickFolder);
   $('btn-md-preview').addEventListener('click', () => setPreviewOpen(!previewOpen));
+  $('reconnect-login-btn').addEventListener('click', showLogin);
   $('discover-btn').addEventListener('click', doDiscover);
   $('probe-btn').addEventListener('click', doProbe);
   $('login-btn').addEventListener('click', doLogin);
@@ -838,6 +879,10 @@ function subscribe() {
 
 async function boot() {
   if (window.fillIcons) window.fillIcons(); // data-icon → 真实 SVG（与 web 同一套图标）
+  // 断线提示条上的倒计时：本地每秒重算，不依赖后端推秒
+  setInterval(() => {
+    if (state && (state.reconnecting || state.reconnect_stopped)) paintReconnectText();
+  }, 1000);
   initTheme();
   bind();
   subscribe();

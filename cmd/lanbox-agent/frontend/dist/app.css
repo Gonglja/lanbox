@@ -502,6 +502,32 @@ input[type='checkbox'] {
   width: 100%;
 }
 
+/* 断线提示条：重连中黄、已停手红；不弹 toast，不锁住输入 */
+.banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 8px 10px;
+  border: 1px solid color-mix(in oklch, var(--warning) 35%, var(--line));
+  border-radius: var(--radius-md);
+  background: var(--warning-soft);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.banner .icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--warning);
+}
+.banner-text { flex: 1; min-width: 0; }
+.banner.is-stopped {
+  border-color: color-mix(in oklch, var(--danger) 35%, var(--line));
+  background: var(--danger-soft);
+}
+.banner.is-stopped .icon { color: var(--danger); }
+.banner .link-btn { flex: none; text-decoration: underline; }
+
 /* 发布区：与 webui 的 composer 同款卡片，输入框放大 */
 .composer {
   display: grid;

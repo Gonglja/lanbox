@@ -37,6 +37,13 @@ type UIState struct {
 	Paused      bool   `json:"paused"`
 	Listening   bool   `json:"listening"`
 	Available   bool   `json:"available"`
+	// 断线重连状态：界面用它决定状态点颜色、顶部文案与提示条。
+	Connected         bool   `json:"connected"`
+	Reconnecting      bool   `json:"reconnecting"`
+	ReconnectAttempts int    `json:"reconnect_attempts"`
+	NextRetryAt       int64  `json:"next_retry_at"` // epoch 毫秒，前端自己走秒
+	ReconnectStopped  bool   `json:"reconnect_stopped"`
+	ReconnectReason   string `json:"reconnect_reason"`
 	HasPassword bool   `json:"has_password"`
 	LastErr     string `json:"last_err"`
 	LastSkip    string `json:"last_skip"`
@@ -142,6 +149,10 @@ type App struct {
 	found    []mdns.Service
 	lastErr  string
 	mgr      *agent.Manager
+	rc       *agent.Reconnector
+	// saveSession 默认写 ~/.config/lanbox/session.json；测试里替换成不落盘，
+	// 免得把开发机上的真实会话覆盖掉。
+	saveSession func(*client.Session) error
 	watcher  *winclip.Watcher
 	watching bool
 	quitting bool
@@ -169,6 +180,9 @@ func NewApp(version string, logger *log.Logger) *App {
 		a.dataDir = dir
 		a.logPath = filepath.Join(dir, "agent.log")
 	}
+	// 先建重连状态机：Manager 的 OnState 回调里会读它（uiState→rc），顺序不能反。
+	a.rc = agent.NewReconnector(agent.DefaultReconnectPolicy())
+	a.saveSession = session.Save
 	a.mgr = agent.NewManager(agent.Options{
 		Uploader:    &uploader{holder: a.holder},
 		Settings:    s.agentSettings(),
@@ -204,9 +218,11 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.restoreSession()
 	a.syncWatcher()
+	a.enableReconnect()
 	a.emitState()
 	a.emit("records", a.mgr.History())
 	go a.pumpClipboard()
+	go a.reconnectLoop(ctx)
 	if a.settings.App.CloseToTray {
 		// 启动时保持在托盘，用户从托盘点开窗口即可。
 	}
@@ -255,61 +271,56 @@ func (a *App) restoreSession() {
 	a.sess = sess
 	a.mu.Unlock()
 	a.holder.set(cli)
-
-	// 探活：会话可能已过期。
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	defer cancel()
-	if _, err := cli.Me(ctx); err != nil {
-		a.logf("会话已失效: %v", err)
-		if !a.tryRelogin(context.Background()) {
-			a.holder.set(nil)
-			a.mu.Lock()
-			a.sess = nil
-			a.mu.Unlock()
-			a.setLastErr("登录已失效，请重新登录: " + err.Error())
-			return
-		}
-	}
-	a.mgr.SetAvailable(true)
-	a.setLastErr("")
+	// 这里不再自己探活/重登：交给重连守护统一处理（启动后 1 秒内第一次探活），
+	// 避免两处逻辑各打一次 /api/me 或 /api/login。
 }
 
-// tryRelogin 用保存的密码重新登录。
-func (a *App) tryRelogin(ctx context.Context) bool {
+// relogin 用保存的密码重新登录；返回原始错误，便于区分密码错 / 被限速 / 网络不通。
+func (a *App) relogin(ctx context.Context) error {
 	a.mu.Lock()
 	s := a.settings
 	a.mu.Unlock()
 	pass := s.password()
-	if pass == "" || s.Server.URL == "" || s.Server.Username == "" {
-		return false
+	if s.Server.URL == "" || s.Server.Username == "" || pass == "" {
+		return errNoPassword
 	}
 	sess, hc, err := doLogin(ctx, s.Server.URL, s.Server.Username, pass, s.Server.PinFP)
 	if err != nil {
-		a.logf("自动重新登录失败: %v", err)
-		return false
+		return err
 	}
 	cli, err := client.New(client.Options{BaseURL: sess.URL, SID: sess.SID, HTTP: hc})
 	if err != nil {
-		return false
+		return err
 	}
-	if err := session.Save(sess); err != nil {
+	save := a.saveSession
+	if save == nil {
+		save = session.Save
+	}
+	if err := save(sess); err != nil {
 		a.logf("保存会话失败: %v", err)
 	}
 	a.mu.Lock()
 	a.sess = sess
 	a.mu.Unlock()
 	a.holder.set(cli)
-	a.mgr.SetAvailable(true)
-	return true
+	return nil
 }
 
-// reauth 是 agent.Manager 的会话失效回调。
+// reauth 是 agent.Manager 的会话失效回调（上传时撞到 401）。
 func (a *App) reauth(ctx context.Context) (bool, error) {
-	ok := a.tryRelogin(ctx)
-	if ok {
-		a.syncWatcher()
+	err := a.relogin(ctx)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return false, nil
+		}
+		// 失败原因回灌状态机，交给后台守护按退避继续（不要把登录限速打爆）。
+		a.noteReloginFailure(err)
+		return false, nil
 	}
-	return ok, nil
+	a.mgr.SetAvailable(true)
+	a.syncWatcher()
+	a.rc.ReloginOK(time.Now())
+	return true, nil
 }
 
 // syncWatcher 按配置启停剪贴板监听。
@@ -359,23 +370,32 @@ func (a *App) emit(event string, payload any) {
 // uiState 组装界面状态。
 func (a *App) uiState() UIState {
 	ms := a.mgr.State()
+	stopped, reason := a.rc.Stopped()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	st := UIState{
-		Version:     a.version,
-		Enabled:     a.settings.Clipboard.Enabled,
-		Paused:      a.settings.Clipboard.Paused,
-		Listening:   a.watching,
-		Available:   a.holder.get() != nil && ms.Available,
-		HasPassword: a.settings.Server.Password != "",
-		LastErr:     a.lastErr,
-		LastSkip:    ms.LastSkip,
-		Active:      ms.Active,
-		Queue:       ms.Queue,
-		LogPath:     a.logPath,
-		DataDir:     a.dataDir,
-		Autostart:   a.settings.App.Autostart,
-		CloseTray:   a.settings.App.CloseToTray,
+		Version:           a.version,
+		Enabled:           a.settings.Clipboard.Enabled,
+		Paused:            a.settings.Clipboard.Paused,
+		Listening:         a.watching,
+		Available:         a.holder.get() != nil && ms.Available,
+		Connected:         a.rc.Connected(),
+		Reconnecting:      a.rc.Reconnecting(),
+		ReconnectAttempts: a.rc.Attempts(),
+		ReconnectStopped:  stopped,
+		ReconnectReason:   reason,
+		HasPassword:       a.settings.Server.Password != "",
+		LastErr:           a.lastErr,
+		LastSkip:          ms.LastSkip,
+		Active:            ms.Active,
+		Queue:             ms.Queue,
+		LogPath:           a.logPath,
+		DataDir:           a.dataDir,
+		Autostart:         a.settings.App.Autostart,
+		CloseTray:         a.settings.App.CloseToTray,
+	}
+	if at := a.rc.NextRetryAt(); !at.IsZero() {
+		st.NextRetryAt = at.UnixMilli()
 	}
 	if a.sess != nil {
 		st.Server = a.sess.URL
@@ -444,6 +464,11 @@ func (a *App) SaveSettings(next Settings) error {
 	a.mu.Unlock()
 	a.mgr.SetSettings(next.agentSettings())
 	a.syncWatcher()
+	// 服务器/账号/密码变了就重置守护，按新配置立即重新判断能不能自动连上。
+	if prev.Server.URL != next.Server.URL || prev.Server.Username != next.Server.Username ||
+		prev.Server.PinFP != next.Server.PinFP || prev.Server.Password != next.Server.Password {
+		a.enableReconnect()
+	}
 	a.emitState()
 	return nil
 }
@@ -524,6 +549,7 @@ func (a *App) Login(req LoginRequest) (UIState, error) {
 	a.mgr.SetAvailable(true)
 	a.setLastErr("")
 	a.syncWatcher()
+	a.rc.Enable(true)
 	a.emitState()
 	return a.uiState(), nil
 }
@@ -566,6 +592,7 @@ func (a *App) Logout() error {
 	a.mu.Unlock()
 	_ = session.Remove()
 	_ = saved.save()
+	a.rc.Disable()
 	a.mgr.SetAvailable(false)
 	a.syncWatcher()
 	a.emitState()
