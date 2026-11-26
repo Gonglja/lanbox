@@ -35,6 +35,8 @@ type Options struct {
 	// IfaceAddrs 提供宿主机自己的非回环 IP（Android 上 Go 拿不到网卡列表）。
 	// 为 nil 时只依赖 net.Interfaces()。
 	IfaceAddrs func() []string
+	// Update 返回在线更新管理器，nil 或返回 nil 表示不支持（所有 /api/update* 返回 501）。
+	Update func() UpdateManager
 }
 
 // Server 是 lanbox 的 HTTP 处理入口。
@@ -53,15 +55,16 @@ type Server struct {
 	version    string
 
 	// discover 由 main 注入（内部用 internal/mdns）；结果缓存 discoverCacheTTL。
-	discover      DiscoverFunc
+	discover        DiscoverFunc
 	allowLoopback   bool
 	loopbackToken   string
-	restartDisabled  bool
-	ifaceAddrs       func() []string
+	restartDisabled bool
+	ifaceAddrs      func() []string
+	update          func() UpdateManager
 	loopbackLimiter *auth.Limiter
-	discoverMu    sync.Mutex
-	discoverCache []DiscoveredServer
-	discoverAt    time.Time
+	discoverMu      sync.Mutex
+	discoverCache   []DiscoveredServer
+	discoverAt      time.Time
 }
 
 // New 组装路由与中间件。
@@ -76,23 +79,24 @@ func New(opts Options) *Server {
 		opts.Version = "dev"
 	}
 	s := &Server{
-		cfg:        opts.Cfg,
-		store:      opts.Store,
-		auth:       opts.Auth,
-		hub:        NewHub(),
-		web:        opts.Web,
-		log:        opts.Log,
-		mux:        http.NewServeMux(),
-		live:       opts.Live,
-		mdnsStatus: opts.MDNSStatus,
-		discover:   opts.Discover,
+		cfg:             opts.Cfg,
+		store:           opts.Store,
+		auth:            opts.Auth,
+		hub:             NewHub(),
+		web:             opts.Web,
+		log:             opts.Log,
+		mux:             http.NewServeMux(),
+		live:            opts.Live,
+		mdnsStatus:      opts.MDNSStatus,
+		discover:        opts.Discover,
 		allowLoopback:   opts.AllowLoopbackLogin,
 		loopbackToken:   opts.LoopbackToken,
-		restartDisabled:  opts.RestartDisabled,
-		ifaceAddrs:       opts.IfaceAddrs,
+		restartDisabled: opts.RestartDisabled,
+		ifaceAddrs:      opts.IfaceAddrs,
+		update:          opts.Update,
 		loopbackLimiter: auth.NewLimiter(time.Minute, 10, time.Minute),
-		startedAt:  opts.StartedAt,
-		version:    opts.Version,
+		startedAt:       opts.StartedAt,
+		version:         opts.Version,
 	}
 	s.routes()
 	return s
@@ -117,6 +121,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/config", s.withAdmin(s.handleGetConfig))
 	s.mux.HandleFunc("PUT /api/config", s.withAdmin(s.handlePutConfig))
 	s.mux.HandleFunc("POST /api/config/restart", s.withAdmin(s.handleRestart))
+
+	s.mux.HandleFunc("GET /api/update", s.withAuth(s.handleGetUpdate))
+	s.mux.HandleFunc("POST /api/update/check", s.withAdmin(s.handleCheckUpdate))
+	s.mux.HandleFunc("POST /api/update/apply", s.withAdmin(s.handleApplyUpdate))
+	s.mux.HandleFunc("POST /api/update/rollback", s.withAdmin(s.handleRollbackUpdate))
 
 	s.mux.HandleFunc("POST /api/login", s.handleLogin)
 	s.mux.HandleFunc("POST /api/logout", s.withAuth(s.handleLogout))

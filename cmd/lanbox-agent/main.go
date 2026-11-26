@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"time"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -24,6 +25,13 @@ var version = "dev"
 var assets embed.FS
 
 func main() {
+	// 升级时旧进程会带上自己的 PID：等它退出再抢单实例锁，否则新进程会静默退出。
+	if pid := waitPidArg(os.Args[1:]); pid != 0 {
+		logger, closeLog := setupLog()
+		logger.Printf("升级后重启：等待旧进程 %d 退出", pid)
+		waitForProcess(pid, 15*time.Second)
+		closeLog()
+	}
 	if !acquireSingleInstance() {
 		// 已有一个实例在跑：静默退出，避免两份剪贴板监听重复上传。
 		return

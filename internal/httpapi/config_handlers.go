@@ -21,16 +21,17 @@ type MDNSStatus struct {
 }
 
 type configValues struct {
-	Listen          *string      `json:"listen"`
-	DataDir         *string      `json:"data_dir"`
-	TLS             *config.TLS  `json:"tls"`
-	MaxFileSizeMB   *int64       `json:"max_file_size_mb"`
-	MaxItemSizeMB   *int64       `json:"max_item_size_mb"`
-	MinFreeDiskMB   *int64       `json:"min_free_disk_mb"`
-	MaxFilesPerItem *int         `json:"max_files_per_item"`
-	MaxTextBytes    *int         `json:"max_text_bytes"`
-	SessionTTLHours *int         `json:"session_ttl_hours"`
-	MDNS            *config.MDNS `json:"mdns"`
+	Listen          *string        `json:"listen"`
+	DataDir         *string        `json:"data_dir"`
+	TLS             *config.TLS    `json:"tls"`
+	MaxFileSizeMB   *int64         `json:"max_file_size_mb"`
+	MaxItemSizeMB   *int64         `json:"max_item_size_mb"`
+	MinFreeDiskMB   *int64         `json:"min_free_disk_mb"`
+	MaxFilesPerItem *int           `json:"max_files_per_item"`
+	MaxTextBytes    *int           `json:"max_text_bytes"`
+	SessionTTLHours *int           `json:"session_ttl_hours"`
+	MDNS            *config.MDNS   `json:"mdns"`
+	Update          *config.Update `json:"update"`
 }
 
 func (v configValues) applyTo(c config.Config) config.Config {
@@ -63,6 +64,12 @@ func (v configValues) applyTo(c config.Config) config.Config {
 	}
 	if v.MDNS != nil {
 		c.MDNS = *v.MDNS
+	}
+	if v.Update != nil {
+		// 令牌只来自环境变量：网页写入时保留当前值。
+		token := c.Update.Token
+		c.Update = *v.Update
+		c.Update.Token = token
 	}
 	return c
 }

@@ -14,6 +14,7 @@ import (
 
 	"lanbox"
 	"lanbox/internal/app"
+	"lanbox/internal/updater"
 )
 
 // version 由构建时注入：-ldflags "-X main.version=v1.0.0"
@@ -29,21 +30,26 @@ func run() error {
 	cfgPath := flag.String("config", "config.json", "配置文件路径（不存在则使用默认值）")
 	resetAdmin := flag.Bool("reset-admin-password", false, "重置 admin 密码并退出")
 	showVersion := flag.Bool("version", false, "打印版本号并退出")
+	rollback := flag.Bool("rollback", false, "把上一次在线升级前的版本换回来并退出（服务起不来时的补救）")
 	flag.Parse()
 
 	if *showVersion {
 		fmt.Printf("lanbox %s\n", version)
 		return nil
 	}
+	if *rollback {
+		return rollbackSelf()
+	}
 
 	logger := log.New(os.Stdout, "", log.LstdFlags)
 	restartCh := make(chan struct{}, 1)
 
 	a, err := app.New(app.Options{
-		CfgPath: *cfgPath,
-		Web:     lanbox.WebFS(),
-		Version: version,
-		Log:     logger,
+		CfgPath:      *cfgPath,
+		Web:          lanbox.WebFS(),
+		Version:      version,
+		EnableUpdate: true,
+		Log:          logger,
 		OnRestart: func() {
 			select {
 			case restartCh <- struct{}{}:
@@ -128,4 +134,18 @@ func printAccessURLs(info app.Info, logger *log.Logger) {
 	if info.MDNSEnabled {
 		logger.Printf("  https://%s.local%s （mDNS）", info.MDNSHostname, addrSuffix)
 	}
+}
+
+// rollbackSelf 把 lanbox.exe.old 换回来；不需要服务能启动，专治升级后起不来。
+func rollbackSelf() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("拿不到自身路径: %w", err)
+	}
+	failed, err := updater.Rollback(exe)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("已回滚到上一版本（有问题的那个留在 %s）。请重新启动 lanbox。\n", failed)
+	return nil
 }

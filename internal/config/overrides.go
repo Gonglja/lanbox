@@ -20,6 +20,7 @@ type Overrides struct {
 	MaxTextBytes    *int    `json:"max_text_bytes,omitempty"`
 	SessionTTLHours *int    `json:"session_ttl_hours,omitempty"`
 	MDNS            *MDNS   `json:"mdns,omitempty"`
+	Update          *Update `json:"update,omitempty"`
 }
 
 // WebConfigPath 返回网页覆盖文件路径（固定在基线 data_dir 下）。
@@ -60,7 +61,7 @@ func (o Overrides) empty() bool {
 	return o.Listen == nil && o.DataDir == nil && o.TLS == nil &&
 		o.MaxFileSizeMB == nil && o.MaxItemSizeMB == nil && o.MinFreeDiskMB == nil &&
 		o.MaxFilesPerItem == nil && o.MaxTextBytes == nil && o.SessionTTLHours == nil &&
-		o.MDNS == nil
+		o.MDNS == nil && o.Update == nil
 }
 
 func (o Overrides) apply(c *Config, origins map[string]string) {
@@ -108,6 +109,14 @@ func (o Overrides) apply(c *Config, origins map[string]string) {
 		mark("mdns.hostname")
 		mark("mdns.instance")
 	}
+	if o.Update != nil {
+		// 令牌只来自环境变量，网页覆盖不会碰它。
+		token := c.Update.Token
+		c.Update = *o.Update
+		c.Update.Token = token
+		mark("update.check")
+		mark("update.url")
+	}
 }
 
 // diff 求 c 相对 baseline 的差集。
@@ -152,6 +161,13 @@ func diff(c, baseline Config) Overrides {
 	if c.MDNS != baseline.MDNS {
 		v := c.MDNS
 		o.MDNS = &v
+	}
+	// 令牌不参与比较：它不来自文件也不来自网页。
+	cur, base := c.Update, baseline.Update
+	cur.Token, base.Token = "", ""
+	if cur != base {
+		v := cur
+		o.Update = &v
 	}
 	return o
 }

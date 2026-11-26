@@ -74,6 +74,12 @@ export const api = {
   config: () => request('GET', '/api/config'),
   saveConfig: (values, restart = false) => request('PUT', '/api/config', { values, restart }),
   restart: () => request('POST', '/api/config/restart'),
+
+  // 在线更新：状态只读缓存；检查/升级/回滚都需要管理员。
+  update: () => request('GET', '/api/update'),
+  checkUpdate: () => request('POST', '/api/update/check'),
+  applyUpdate: (version) => request('POST', '/api/update/apply', { version }),
+  rollbackUpdate: () => request('POST', '/api/update/rollback'),
   healthz: async () => {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 1000);

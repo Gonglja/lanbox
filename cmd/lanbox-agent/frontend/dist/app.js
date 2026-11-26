@@ -207,10 +207,36 @@ function renderState() {
     ? (state.active > 0 ? '上传中 ' + state.active + ' 个，排队 ' + (state.queue - state.active) + ' 个' : '排队 ' + state.queue + ' 个')
     : '';
 
+  renderUpdateState();
   const hint = state.reconnect_stopped ? (state.reconnect_reason || state.last_err)
     : (state.reconnecting ? (state.last_err || '正在自动重连') : (state.last_err || state.last_skip)) || '';
   $('server-label').title = hint;
   renderReconnect();
+}
+
+// renderUpdateState 刷新设置页「关于与更新」那块。
+function renderUpdateState() {
+  const ver = $('about-version');
+  if (ver) ver.textContent = state.version || '-';
+  const status = $('update-status');
+  if (status) {
+    if (state.update_busy) status.textContent = `正在升级 ${state.update_progress || 0}%`;
+    else if (state.update_available) status.textContent = `有新版 v${state.update_latest}`;
+    else status.textContent = '已是最新（或还没检查）';
+  }
+  const notes = $('update-notes');
+  if (notes) {
+    notes.hidden = !(state.update_available && state.update_notes);
+    if (!notes.hidden) notes.textContent = state.update_notes;
+  }
+  const applyBtn = $('apply-update-btn');
+  if (applyBtn) {
+    const show = state.update_available && !state.update_busy;
+    applyBtn.hidden = !show;
+    if (show) applyBtn.textContent = `升级到 v${state.update_latest} 并重启`;
+  }
+  const rollBtn = $('rollback-update-btn');
+  if (rollBtn) rollBtn.hidden = !(state.can_rollback && !state.update_busy);
 }
 
 function renderRecords() {
@@ -406,6 +432,7 @@ function fillSettings(s) {
   $('set-autostart').checked = !!a.autostart;
   $('set-close-tray').checked = a.close_to_tray !== false;
   $('set-remember').checked = a.remember_password !== false;
+  $('set-check-update').checked = a.check_update !== false;
 }
 
 function collectSettings() {
@@ -427,7 +454,54 @@ function collectSettings() {
   a.autostart = $('set-autostart').checked;
   a.close_to_tray = $('set-close-tray').checked;
   a.remember_password = $('set-remember').checked;
+  a.check_update = $('set-check-update').checked;
   return s;
+}
+
+async function doCheckUpdate() {
+  const btn = $('check-update-btn');
+  btn.disabled = true;
+  try {
+    await call('CheckUpdate');
+    state = await call('GetState');
+    renderState();
+    toast('检查完成');
+  } catch (e) {
+    toast('检查失败: ' + errText(e), 6000);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function doApplyUpdate() {
+  const ok = await confirmDialog({
+    title: '升级 lanbox-agent',
+    message: `将下载 ${state.update_latest}，替换当前程序后自动重启客户端。剪贴板监听会短暂中断。`,
+    confirmText: '升级并重启',
+  });
+  if (!ok) return;
+  try {
+    await call('ApplyUpdate', state.update_latest);
+    toast('正在重启…', 6000);
+  } catch (e) {
+    toast('升级失败: ' + errText(e), 8000);
+  }
+}
+
+async function doRollbackUpdate() {
+  const ok = await confirmDialog({
+    title: '回滚',
+    message: '把上一次升级前的程序换回来，然后重启客户端。',
+    confirmText: '回滚并重启',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await call('RollbackUpdate');
+    toast('正在重启…', 6000);
+  } catch (e) {
+    toast('回滚失败: ' + errText(e), 8000);
+  }
 }
 
 function intOr(v, def) {
@@ -792,6 +866,9 @@ function bind() {
   $('password').addEventListener('blur', () => { $('login-caps').hidden = true; });
 
   $('save-settings-btn').addEventListener('click', doSaveSettings);
+  $('check-update-btn').addEventListener('click', doCheckUpdate);
+  $('apply-update-btn').addEventListener('click', doApplyUpdate);
+  $('rollback-update-btn').addEventListener('click', doRollbackUpdate);
   $('theme-btn').addEventListener('click', (ev) => {
     ev.stopPropagation();
     toggleThemeMenu();

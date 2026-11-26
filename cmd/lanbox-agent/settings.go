@@ -37,6 +37,9 @@ type UIAppSettings struct {
 	CloseToTray      bool `json:"close_to_tray"`
 	HistorySize      int  `json:"history_size"`
 	RememberPassword bool `json:"remember_password"`
+	// CheckUpdate 打开启动后/每天的静默检查（只提示，不会自动升级）。
+	// 字段缺失（老配置文件）时保持默认 true。
+	CheckUpdate bool `json:"check_update"`
 }
 
 // ServerSettings 是当前服务器与账号（密码只存 DPAPI 密文）。
@@ -74,6 +77,7 @@ func defaultSettings() Settings {
 			CloseToTray:      true,
 			HistorySize:      50,
 			RememberPassword: true,
+			CheckUpdate:      true,
 		},
 	}
 }
