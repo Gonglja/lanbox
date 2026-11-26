@@ -125,16 +125,22 @@ jobs:
             android/**/*.gradle*
             android/gradle/wrapper/gradle-wrapper.properties
 
-      - name: 安装 Android platform 35 / build-tools / NDK
+      - name: 安装 Android 命令行工具（提供 sdkmanager）
+        uses: android-actions/setup-android@v3
+
+      - name: 安装 platform 35 / build-tools / NDK
         run: |
           set -euo pipefail
           export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          id; ls -ld "$ANDROID_SDK_ROOT"
+          id; ls "$ANDROID_SDK_ROOT"
           # 镜像里的 SDK 目录常属于 root，sdkmanager 写不进去
           sudo chown -R "$(id -u):$(id -g)" "$ANDROID_SDK_ROOT" 2>/dev/null || true
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          if ! sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "ndk;${NDK_VERSION}" > /tmp/sdk.log 2>&1; then
+          SDKMAN="$(command -v sdkmanager || true)"
+          if [ -z "$SDKMAN" ]; then SDKMAN="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"; fi
+          echo "SDKMAN=$SDKMAN"
+          yes | "$SDKMAN" --licenses >/dev/null 2>&1 || true
+          if ! "$SDKMAN" --install "platforms;android-35" "build-tools;35.0.0" "ndk;${NDK_VERSION}" > /tmp/sdk.log 2>&1; then
             tail -12 /tmp/sdk.log | while IFS= read -r l; do echo "::error title=sdkmanager::$(printf '%s' "$l" | cut -c1-350)"; done
             exit 1
           fi
