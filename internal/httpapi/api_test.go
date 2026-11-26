@@ -1128,3 +1128,180 @@ func TestPutConfigRejectsInvalid(t *testing.T) {
 		t.Fatalf("未知字段应 400，得到 %d %s", resp.StatusCode, body)
 	}
 }
+
+// TestStatsVisibility 断言统计接口的鉴权与 admin 分块。
+func TestStatsVisibility(t *testing.T) {
+	e := newEnv(t)
+
+	// 未登录 → 401。
+	resp, body := e.do(t, e.newJSONReq(t, http.MethodGet, "/api/stats", nil))
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("未登录访问 /api/stats 应 401，得到 %d %s", resp.StatusCode, body)
+	}
+
+	e.loginAdmin(t)
+	if _, err := e.store.Create(store.CreateInput{Text: "只有文字", CreatedBy: "admin"}); err != nil {
+		t.Fatal(err)
+	}
+	it, err := e.store.Create(store.CreateInput{Text: "带附件", CreatedBy: "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.AddFile(it.ID, "a.txt", 3, strings.NewReader("abc")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.SetTaken(it.ID, true, "admin"); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, body = e.do(t, e.newJSONReq(t, http.MethodGet, "/api/stats", nil))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("管理员访问 /api/stats 应 200，得到 %d %s", resp.StatusCode, body)
+	}
+	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+		t.Fatalf("应禁用缓存，得到 Cache-Control=%q", cc)
+	}
+	var out struct {
+		Version string `json:"version"`
+		UptimeS int64  `json:"uptime_s"`
+		Items   struct{ Total, Todo, Taken int }
+		Files   struct {
+			Count int
+			Bytes int64
+		}
+		Admin *struct {
+			Users int `json:"users"`
+			Disk  struct {
+				FreeBytes *int64 `json:"free_bytes"`
+				Error     string `json:"error"`
+			} `json:"disk"`
+			ItemsDir string              `json:"items_dir"`
+			Listen   string              `json:"listen"`
+			MDNS     *httpapi.MDNSStatus `json:"mdns"`
+		} `json:"admin"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("解析统计响应失败: %v (%s)", err, body)
+	}
+	if out.Version != "test" {
+		t.Fatalf("版本应为 test，得到 %q", out.Version)
+	}
+	if out.UptimeS < 0 {
+		t.Fatalf("运行时长异常: %d", out.UptimeS)
+	}
+	if out.Items.Total != 2 || out.Items.Todo != 1 || out.Items.Taken != 1 {
+		t.Fatalf("内容统计不对: %+v", out.Items)
+	}
+	if out.Files.Count != 1 || out.Files.Bytes != 3 {
+		t.Fatalf("附件统计不对: %+v", out.Files)
+	}
+	if out.Admin == nil {
+		t.Fatal("管理员应看到 admin 块")
+	}
+	if out.Admin.Users != 1 {
+		t.Fatalf("用户数应为 1，得到 %d", out.Admin.Users)
+	}
+	if want := filepath.Join(e.cfg.DataDir, "items"); out.Admin.ItemsDir != want {
+		t.Fatalf("存储路径应为 %q，得到 %q", want, out.Admin.ItemsDir)
+	}
+	if out.Admin.Listen != e.cfg.Listen {
+		t.Fatalf("监听地址应为 %q，得到 %q", e.cfg.Listen, out.Admin.Listen)
+	}
+	if out.Admin.Disk.FreeBytes == nil && out.Admin.Disk.Error == "" {
+		t.Fatalf("磁盘字段既没有剩余空间也没有错误: %+v", out.Admin.Disk)
+	}
+	if out.Admin.MDNS != nil {
+		t.Fatalf("未注入 mDNS 回调时应省略 mdns，得到 %+v", out.Admin.MDNS)
+	}
+
+	// 普通用户：同一接口可用，但没有 admin 键。
+	if err := e.auth.CreateUser("bob", "bobpassword", false); err != nil {
+		t.Fatal(err)
+	}
+	e.login(t, "bob", "bobpassword")
+	resp, body = e.do(t, e.newJSONReq(t, http.MethodGet, "/api/stats", nil))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("普通用户访问 /api/stats 应 200，得到 %d %s", resp.StatusCode, body)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("解析统计响应失败: %v (%s)", err, body)
+	}
+	if _, ok := raw["admin"]; ok {
+		t.Fatalf("普通用户不应看到 admin 键: %s", body)
+	}
+	for _, key := range []string{"version", "uptime_s", "items", "files"} {
+		if _, ok := raw[key]; !ok {
+			t.Fatalf("普通用户应看到 %q: %s", key, body)
+		}
+	}
+}
+
+// TestStatsDiskErrorDegrades 断言磁盘探测失败只降级 disk 字段，不返回 500。
+func TestStatsDiskErrorDegrades(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "items"), store.Options{
+		FreeSpace: func(string) (int64, error) { return 0, errors.New("statfs 不可用") },
+	})
+	if err != nil {
+		t.Fatalf("打开 store 失败: %v", err)
+	}
+	am, err := auth.Open(filepath.Join(dir, "users.json"), time.Hour)
+	if err != nil {
+		t.Fatalf("打开 auth 失败: %v", err)
+	}
+	pw, _, err := am.BootstrapAdmin()
+	if err != nil {
+		t.Fatalf("初始化管理员失败: %v", err)
+	}
+	cfg := config.Defaults()
+	cfg.DataDir = dir
+	srv := httptest.NewTLSServer(httpapi.New(httpapi.Options{
+		Cfg: cfg, Store: st, Auth: am, Web: lanbox.WebFS(), Log: log.New(io.Discard, "", 0),
+	}))
+	t.Cleanup(srv.Close)
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpc := &http.Client{Jar: jar, Transport: srv.Client().Transport}
+	loginBody := strings.NewReader(fmt.Sprintf(`{"username":"admin","password":%q}`, pw))
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/login", loginBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := httpc.Do(req)
+	if err != nil {
+		t.Fatalf("登录失败: %v", err)
+	}
+	resp.Body.Close()
+
+	resp, err = httpc.Get(srv.URL + "/api/stats")
+	if err != nil {
+		t.Fatalf("请求 /api/stats 失败: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("磁盘探测失败不应影响接口，得到 %d %s", resp.StatusCode, body)
+	}
+	var out struct {
+		Admin struct {
+			Disk struct {
+				FreeBytes *int64 `json:"free_bytes"`
+				Error     string `json:"error"`
+			} `json:"disk"`
+		} `json:"admin"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("解析响应失败: %v (%s)", err, body)
+	}
+	if out.Admin.Disk.Error != "statfs 不可用" {
+		t.Fatalf("应带上探测错误，得到 %q", out.Admin.Disk.Error)
+	}
+	if out.Admin.Disk.FreeBytes != nil {
+		t.Fatalf("探测失败时不应有 free_bytes，得到 %v", *out.Admin.Disk.FreeBytes)
+	}
+}

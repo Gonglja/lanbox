@@ -26,6 +26,7 @@ type testEnv struct {
 	https *httptest.Server
 	pw    string
 	store *store.Store
+	auth  *auth.Manager
 }
 
 // newTestEnv 起一个真实的 TLS 服务端，与 httpapi 测试夹具同构。
@@ -60,7 +61,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		Cfg: cfg, Store: st, Auth: am, Web: lanbox.WebFS(), Log: log.New(io.Discard, "", 0),
 	}))
 	t.Cleanup(srv.Close)
-	return &testEnv{url: srv.URL, https: srv, pw: pw, store: st}
+	return &testEnv{url: srv.URL, https: srv, pw: pw, store: st, auth: am}
 }
 
 func loginClient(t *testing.T, e *testEnv) *client.Client {
@@ -493,5 +494,76 @@ func TestPutProgressReachesTotalWithText(t *testing.T) {
 	}
 	if last != total || total == 0 {
 		t.Fatalf("进度应到 100%%: last=%d total=%d", last, total)
+	}
+}
+
+// TestStatsAdmin 断言管理员能看到统计与 admin 块。
+func TestStatsAdmin(t *testing.T) {
+	e := newTestEnv(t)
+	c := loginClient(t, e)
+	ctx := context.Background()
+
+	it, err := e.store.Create(store.CreateInput{Text: "带附件", CreatedBy: "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.AddFile(it.ID, "a.txt", 2, strings.NewReader("hi")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.Create(store.CreateInput{Text: "只有文字", CreatedBy: "admin"}); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := c.Stats(ctx)
+	if err != nil {
+		t.Fatalf("Stats 失败: %v", err)
+	}
+	if st.Items != (client.StatsItems{Total: 2, Todo: 2}) {
+		t.Fatalf("内容统计不对: %+v", st.Items)
+	}
+	if st.Files != (client.StatsFiles{Count: 1, Bytes: 2}) {
+		t.Fatalf("附件统计不对: %+v", st.Files)
+	}
+	if st.Version == "" || st.UptimeS < 0 {
+		t.Fatalf("版本/运行时长异常: %q %d", st.Version, st.UptimeS)
+	}
+	if st.Admin == nil {
+		t.Fatal("管理员响应应包含 admin 块")
+	}
+	if st.Admin.Users != 1 {
+		t.Fatalf("用户数应为 1，得到 %d", st.Admin.Users)
+	}
+	if st.Admin.ItemsDir == "" || st.Admin.Listen == "" {
+		t.Fatalf("存储路径/监听地址为空: %+v", st.Admin)
+	}
+	if st.Admin.Disk.FreeBytes == nil && st.Admin.Disk.Error == "" {
+		t.Fatalf("磁盘字段既没有空间也没有错误: %+v", st.Admin.Disk)
+	}
+}
+
+// TestStatsNonAdminHasNoAdminBlock 断言普通用户拿不到 admin 块。
+func TestStatsNonAdminHasNoAdminBlock(t *testing.T) {
+	e := newTestEnv(t)
+	if err := e.auth.CreateUser("bob", "bobpassword", false); err != nil {
+		t.Fatalf("创建普通用户失败: %v", err)
+	}
+	httpc := e.https.Client()
+	sess, err := client.Login(context.Background(), e.url, "bob", "bobpassword", httpc)
+	if err != nil {
+		t.Fatalf("登录失败: %v", err)
+	}
+	c, err := client.New(client.Options{BaseURL: sess.URL, SID: sess.SID, HTTP: httpc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := c.Stats(context.Background())
+	if err != nil {
+		t.Fatalf("Stats 失败: %v", err)
+	}
+	if st.Admin != nil {
+		t.Fatalf("普通用户不应看到 admin 块: %+v", st.Admin)
+	}
+	if st.Version == "" {
+		t.Fatal("普通用户也应看到版本")
 	}
 }

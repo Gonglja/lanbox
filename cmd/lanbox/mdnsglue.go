@@ -82,6 +82,7 @@ func (m *mdnsRunner) status(cfg config.Config) httpapi.MDNSStatus {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return httpapi.MDNSStatus{
+		Enabled:  cfg.MDNS.Enabled,
 		Running:  m.r != nil,
 		Instance: m.instance,
 		Host:     m.host,
