@@ -56,6 +56,21 @@ const ICONS = {
   user: ['M12 12.4a3.9 3.9 0 1 0 0-7.8 3.9 3.9 0 0 0 0 7.8Z', 'M4.8 20c.9-3.6 3.8-5.6 7.2-5.6s6.3 2 7.2 5.6'],
   shield: ['M12 3.6 5 6.2v5.3c0 4.1 2.8 7.7 7 8.9 4.2-1.2 7-4.8 7-8.9V6.2Z', 'M9 12l2.2 2.2L15.4 10'],
   activity: ['M3 12h4l2.5-7 5 14 2.5-7h4'],
+  qr: [
+    'M4 4h5v5H4z',
+    'M15 4h5v5h-5z',
+    'M4 15h5v5H4z',
+    'M14.5 14.5h2v2h-2z',
+    'M19 14.5h1v1h-1z',
+    'M14.5 19.5h1v1h-1z',
+    'M18 18h2v2h-2z',
+  ],
+  wifi: [
+    'M4.5 10a11 11 0 0 1 15 0',
+    'M8 13.2a6.6 6.6 0 0 1 8 0',
+    'M10.4 16.2a2.8 2.8 0 0 1 3.2 0',
+    'M12 19.4v.2',
+  ],
   refresh: ['M20 12a8 8 0 1 1-2.3-5.7', 'M20.5 4.5V9H16'],
 };
 
@@ -327,4 +342,87 @@ export function initTheme() {
     if (media.addEventListener) media.addEventListener('change', onChange);
     else if (media.addListener) media.addListener(onChange);
   }
+}
+
+// ---------- 自定义内容面板 ----------
+
+let activePanel = null;
+
+// openPanel 用与对话框一致的样式承载任意 DOM（扫码取景、服务器列表等）。
+// 返回 { root, close, setBusy }；ESC、点遮罩、点右上角都会关闭并回调 onClose。
+export function openPanel({ title, content, onClose }) {
+  const host = document.getElementById('modal-root');
+  if (!host) return { root: null, close() {}, setBusy() {} };
+  closePanel();
+
+  const dialog = document.createElement('div');
+  dialog.className = 'dialog dialog-wide';
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+
+  const head = document.createElement('div');
+  head.className = 'dialog-head';
+  const h = document.createElement('h2');
+  h.className = 'dialog-title';
+  h.textContent = title || '';
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'btn btn-icon';
+  close.setAttribute('aria-label', '关闭');
+  close.title = '关闭（Esc）';
+  close.append(iconEl('close'));
+  head.append(h, close);
+  dialog.append(head);
+
+  const body = document.createElement('div');
+  body.className = 'dialog-body';
+  if (content) body.append(content);
+  dialog.append(body);
+
+  host.replaceChildren(dialog);
+  host.hidden = false;
+
+  const finish = () => {
+    if (!activePanel) return;
+    activePanel = null;
+    host.hidden = true;
+    host.replaceChildren();
+    host.onclick = null;
+    document.removeEventListener('keydown', onKey, true);
+    if (typeof onClose === 'function') {
+      try {
+        onClose();
+      } catch {
+        /* 关闭回调不应影响界面 */
+      }
+    }
+  };
+  const onKey = (ev) => {
+    if (ev.key === 'Escape' && activePanel) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      finish();
+    }
+  };
+
+  close.addEventListener('click', finish);
+  host.onclick = (ev) => {
+    if (ev.target === host) finish();
+  };
+  document.addEventListener('keydown', onKey, true);
+  activePanel = { root: dialog, finish };
+  requestAnimationFrame(() => close.focus());
+
+  return {
+    root: dialog,
+    close: finish,
+    setBusy(on) {
+      dialog.setAttribute('aria-busy', on ? 'true' : 'false');
+    },
+  };
+}
+
+// closePanel 关闭当前面板（若有）。
+export function closePanel() {
+  if (activePanel) activePanel.finish();
 }

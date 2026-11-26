@@ -13,23 +13,45 @@
 
 <!-- ============ 登录 ============ -->
 <section id="login-view" class="auth" hidden>
-  <form id="login-form" class="auth-card">
-    <div class="brand brand-lg">
-      <span class="brand-mark" aria-hidden="true"></span>
-      <span class="brand-name">lanbox</span>
+  <div class="auth-bg" aria-hidden="true"></div>
+  <form id="login-form" class="auth-card" novalidate>
+    <div class="auth-head">
+      <div class="brand brand-lg">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">lanbox</span>
+      </div>
+      <p class="auth-sub">局域网文件与消息</p>
     </div>
-    <p class="auth-sub">局域网文件与消息</p>
-    <label class="field">
-      <span class="field-label">用户名</span>
-      <input id="login-username" name="username" autocomplete="username" required autofocus>
+
+    <div class="auth-fields">
+      <div class="field">
+        <label class="field-label" for="login-username">用户名</label>
+        <input id="login-username" name="username" autocomplete="username"
+               autocapitalize="off" autocorrect="off" spellcheck="false" required autofocus>
+      </div>
+      <div class="field">
+        <label class="field-label" for="login-password">密码</label>
+        <span class="field-control">
+          <input id="login-password" name="password" type="password" autocomplete="current-password"
+                 enterkeyhint="go" required>
+          <button id="btn-toggle-password" class="btn btn-icon field-toggle" type="button"
+                  aria-label="显示密码" aria-pressed="false" title="显示密码">
+            <span class="icon" data-icon="eye"></span>
+          </button>
+        </span>
+      </div>
+      <p id="login-caps" class="field-hint auth-caps" hidden>大写锁定已开启</p>
+      <p id="login-error" class="field-error auth-error" role="alert" aria-live="assertive" hidden></p>
+    </div>
+
+    <label class="check auth-remember">
+      <input id="login-remember" type="checkbox">
+      <span>记住用户名</span>
     </label>
-    <label class="field">
-      <span class="field-label">密码</span>
-      <input id="login-password" name="password" type="password" autocomplete="current-password" required>
-    </label>
-    <p id="login-error" class="field-error" hidden></p>
-    <button type="submit" class="btn btn-primary btn-block">登录</button>
+
+    <button id="login-submit" type="submit" class="btn btn-primary btn-block auth-submit">登录</button>
   </form>
+  <p class="auth-foot"><span id="login-host"></span></p>
 </section>
 
 <!-- ============ 主界面 ============ -->
@@ -185,6 +207,22 @@
             </button>
           </div>
           <p id="status-error" class="field-error" hidden></p>
+
+          <section id="connect-card" class="status-card connect-card" hidden aria-label="手机扫码连接">
+            <h3 class="status-card-title">手机扫码连接 <span id="connect-name" class="connect-name"></span></h3>
+            <div class="connect-body">
+              <div id="connect-qr" class="connect-qr"></div>
+              <div class="connect-side">
+                <label class="field">
+                  <span class="field-label">连接地址</span>
+                  <select id="connect-url"></select>
+                </label>
+                <p class="hint">手机相机扫码即可打开；也可以在纯 web 客户端里「扫码添加」。
+                  自签证书首次还需要在手机上选择「继续访问」。</p>
+              </div>
+            </div>
+          </section>
+
           <div id="status-cards" class="status-cards"></div>
         </section>
 

@@ -1,6 +1,7 @@
 // status.js：状态页。数据来自 GET /api/stats，页面打开时每 5 秒自动刷新。
 import { api } from './api.js';
 import { fmtBytes } from './render.js';
+import { fillURLOptions, renderQR } from './connect.js';
 
 const $ = (id) => document.getElementById(id);
 const REFRESH_MS = 5000;
@@ -148,9 +149,31 @@ function stopTimer() {
   }
 }
 
+// refreshConnect 渲染「手机扫码连接」卡片：换地址就换二维码。
+async function refreshConnect() {
+  const card = $('connect-card');
+  if (!card) return;
+  try {
+    const info = await api.connect();
+    const urls = (info && info.urls) || [];
+    if (!urls.length) {
+      card.hidden = true;
+      return;
+    }
+    const pick = fillURLOptions($('connect-url'), urls, info.preferred);
+    renderQR($('connect-qr'), pick, pick);
+    $('connect-name').textContent = info.name || '';
+    card.hidden = false;
+  } catch {
+    // 连接信息拿不到时静默隐藏，不影响其它状态卡片
+    card.hidden = true;
+  }
+}
+
 // openStatusPage 进入状态页：立刻拉一次，然后开始轮询。
 export function openStatusPage() {
   refreshStatus();
+  refreshConnect();
   startTimer();
 }
 
@@ -159,7 +182,13 @@ export function closeStatusPage() {
 }
 
 export function initStatusPage() {
-  $('btn-status-refresh').addEventListener('click', refreshStatus);
+  $('btn-status-refresh').addEventListener('click', () => {
+    refreshStatus();
+    refreshConnect();
+  });
+  $('connect-url')?.addEventListener('change', (ev) => {
+    renderQR($('connect-qr'), ev.target.value, ev.target.value);
+  });
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && !$('status-view').hidden) refreshStatus();
   });

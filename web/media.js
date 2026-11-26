@@ -2,6 +2,7 @@
 // 与服务端 internal/httpapi/preview.go 的白名单保持一致；服务端白名单更宽
 // （还包含音频），但界面只做图片与视频预览，其余仍走附件下载。
 import { iconEl } from './ui.js';
+import { authedURL } from './env.js';
 
 const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp', 'ico', 'svg']);
 const VIDEO_EXT = new Set(['mp4', 'm4v', 'webm', 'ogv', 'mov', 'mkv']);
@@ -22,12 +23,17 @@ export function previewKind(name) {
 
 // mediaSrc 是内联预览地址（服务端按 ?inline=1 返回正确 MIME 并支持 Range）。
 export function mediaSrc(itemId, fileId) {
-  return fileURL(itemId, fileId) + '?inline=1';
+  return authedURL(fileURL(itemId, fileId) + '?inline=1');
 }
 
 // downloadSrc 是原始附件地址（Content-Disposition: attachment）。
 export function downloadSrc(itemId, fileId) {
-  return fileURL(itemId, fileId);
+  return authedURL(fileURL(itemId, fileId));
+}
+
+// zipSrc 是整条内容打包下载地址。
+export function zipSrc(itemId) {
+  return authedURL(`/api/items/${encodeURIComponent(itemId)}/zip`);
 }
 
 function fileURL(itemId, fileId) {

@@ -16,6 +16,20 @@ import {
 
 const $ = (id) => document.getElementById(id);
 
+// hooks 供纯 web 客户端（client/app.js）挂接，不改变服务端 UI 的任何行为。
+// showLogin：会话不可用，已回到登录页；showApp：已拿到身份并进入主界面。
+export const hooks = { showLogin: [], showApp: [] };
+
+function runHooks(name) {
+  for (const fn of hooks[name]) {
+    try {
+      fn(state.user);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+}
+
 const state = {
   user: null,
   items: new Map(), // id -> item，最新在前
@@ -62,6 +76,48 @@ function setSidebarRail(next) {
 
 // ---------- 视图切换 ----------
 
+// 登录状态：记住的用户名与错误提示都只影响登录卡片本身
+const LOGIN_USER_KEY = 'lanbox.login.username';
+
+function readRememberedUser() {
+  try {
+    return localStorage.getItem(LOGIN_USER_KEY) || '';
+  } catch {
+    return ''; // 隐私模式
+  }
+}
+
+function saveRememberedUser(name) {
+  try {
+    if (name) localStorage.setItem(LOGIN_USER_KEY, name);
+    else localStorage.removeItem(LOGIN_USER_KEY);
+  } catch {
+    /* 存不下就只在本次生效 */
+  }
+}
+
+function clearLoginError() {
+  $('login-error').hidden = true;
+  $('login-username').removeAttribute('aria-invalid');
+  $('login-password').removeAttribute('aria-invalid');
+}
+
+function showLoginError(message, focusEl) {
+  const error = $('login-error');
+  error.textContent = message;
+  error.hidden = false;
+  $('login-username').setAttribute('aria-invalid', 'true');
+  $('login-password').setAttribute('aria-invalid', 'true');
+  const card = $('login-form');
+  card.classList.remove('is-shake');
+  void card.offsetWidth; // 强制回流，让抖动可以重复播放
+  card.classList.add('is-shake');
+  if (focusEl) {
+    focusEl.focus();
+    if (focusEl.select) focusEl.select();
+  }
+}
+
 function showLogin() {
   $('login-view').hidden = false;
   $('app-view').hidden = true;
@@ -74,7 +130,23 @@ function showLogin() {
   }
   stopTicker();
   setView('timeline');
-  $('login-username').focus();
+
+  // 重置登录卡片：不把上一位用户的密码或错误留在屏幕上
+  const remembered = readRememberedUser();
+  const username = $('login-username');
+  const password = $('login-password');
+  username.value = remembered;
+  password.value = '';
+  password.type = 'password';
+  $('login-remember').checked = Boolean(remembered);
+  $('login-caps').hidden = true;
+  $('btn-toggle-password').setAttribute('aria-pressed', 'false');
+  $('btn-toggle-password').setAttribute('aria-label', '显示密码');
+  $('btn-toggle-password').title = '显示密码';
+  clearLoginError();
+  $('login-host').textContent = location.host || 'lanbox';
+  (remembered ? password : username).focus();
+  runHooks('showLogin');
 }
 
 function showApp() {
@@ -90,6 +162,7 @@ function showApp() {
   startEvents();
   startTicker();
   syncSidebarForViewport();
+  runHooks('showApp');
 }
 
 // ---------- 时间显示 ----------
@@ -460,18 +533,80 @@ const handlers = {
 // ---------- 事件绑定 ----------
 
 function bind() {
-  $('login-form').addEventListener('submit', async (ev) => {
+  const loginForm = $('login-form');
+  const usernameInput = $('login-username');
+  const passwordInput = $('login-password');
+  const submitBtn = $('login-submit');
+
+  loginForm.addEventListener('submit', async (ev) => {
     ev.preventDefault();
-    $('login-error').hidden = true;
+    if (submitBtn.disabled) return; // 连点 / 回车重入时忽略
+    const username = usernameInput.value.trim();
+    const password = passwordInput.value;
+    if (!username) {
+      showLoginError('请输入用户名', usernameInput);
+      return;
+    }
+    if (!password) {
+      showLoginError('请输入密码', passwordInput);
+      return;
+    }
+
+    clearLoginError();
+    submitBtn.disabled = true;
+    submitBtn.classList.add('is-busy');
+    submitBtn.setAttribute('aria-busy', 'true');
+    submitBtn.textContent = '正在登录…';
     try {
-      state.user = await api.login($('login-username').value.trim(), $('login-password').value);
-      $('login-password').value = '';
+      state.user = await api.login(username, password);
+      saveRememberedUser($('login-remember').checked ? username : '');
+      passwordInput.value = '';
       showApp();
       await loadFirstPage();
     } catch (err) {
-      $('login-error').textContent = err.message;
-      $('login-error').hidden = false;
+      showLoginError(err.message, passwordInput);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.classList.remove('is-busy');
+      submitBtn.removeAttribute('aria-busy');
+      submitBtn.textContent = '登录';
     }
+  });
+
+  // 输入即清掉上次的错误，避免旧提示一直挂着
+  for (const el of [usernameInput, passwordInput]) el.addEventListener('input', clearLoginError);
+
+  // 取消勾选即忘掉已存用户名，不必等到下次登录成功
+  $('login-remember').addEventListener('change', (ev) => {
+    if (!ev.target.checked) saveRememberedUser('');
+  });
+
+  $('btn-toggle-password').addEventListener('click', () => {
+    const show = passwordInput.type === 'password';
+    passwordInput.type = show ? 'text' : 'password';
+    const btn = $('btn-toggle-password');
+    btn.setAttribute('aria-pressed', String(show));
+    const label = show ? '隐藏密码' : '显示密码';
+    btn.setAttribute('aria-label', label);
+    btn.title = label;
+    passwordInput.focus();
+    const end = passwordInput.value.length;
+    try {
+      passwordInput.setSelectionRange(end, end);
+    } catch {
+      /* 部分浏览器不支持 */
+    }
+  });
+
+  // 大写锁定是很常见的登录失败原因，直接在密码框下提示
+  const syncCaps = (ev) => {
+    const on = typeof ev.getModifierState === 'function' && ev.getModifierState('CapsLock');
+    $('login-caps').hidden = !on;
+  };
+  passwordInput.addEventListener('keydown', syncCaps);
+  passwordInput.addEventListener('keyup', syncCaps);
+  passwordInput.addEventListener('blur', () => {
+    $('login-caps').hidden = true;
   });
 
   $('btn-logout').addEventListener('click', async () => {
@@ -672,12 +807,18 @@ async function main() {
     showApp();
     await loadFirstPage();
   } catch (err) {
-    if (!(err instanceof ApiError) || err.status !== 401) {
-      $('login-error').textContent = err.message;
-      $('login-error').hidden = false;
-    }
     showLogin();
+    if (!(err instanceof ApiError) || err.status !== 401) {
+      showLoginError(err.message);
+    }
   }
 }
 
-main();
+// ---------- 启动 ----------
+
+// boot 供纯 web 客户端接管启动时机（它要先挂好 hooks 再让 main() 探测会话）。
+export function boot() {
+  return main();
+}
+
+if (!window.__LANBOX_DEFER_BOOT__) main();

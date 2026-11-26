@@ -6,6 +6,7 @@
 #                   同时产出 CLI（lanbox-cli）与 Windows 客户端（lanbox-agent）
 #   make windows    只编 Windows 的 exe（amd64/arm64，服务端 + CLI + 客户端）
 #   make agent      只编 Windows 客户端（lanbox-agent，含托盘与剪贴板监听）
+#   make client     把纯 web 客户端打成单文件 dist/lanbox-client.html
 #   make test       跑全部测试
 #   make check      gofmt + go vet + test（提交前自检）
 #   make clean      清掉 dist/ 与本机二进制
@@ -41,7 +42,7 @@ endif
 
 PREFIX ?= /usr/local
 
-.PHONY: all build dist windows agent checksums test vet fmt check run install clean help
+.PHONY: all build dist windows agent client checksums test vet fmt check run install clean help
 
 all: dist
 
@@ -71,6 +72,7 @@ dist:
 			go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST)/$(CLI)-$$os-$$arch$$suffix $(CLI_CMD); \
 	done
 	@$(MAKE) --no-print-directory windows
+	@$(MAKE) --no-print-directory client
 	@$(MAKE) --no-print-directory checksums
 
 ## windows: 交叉编译 Windows exe（amd64/arm64，服务端 + CLI + 客户端）
@@ -103,6 +105,11 @@ else
 	@echo "lanbox-agent 只能在 Windows 上运行；交叉编译请用 make windows" >&2
 	@exit 1
 endif
+
+## client: 把纯 web 客户端（client/）打成单文件 dist/lanbox-client.html
+client:
+	@mkdir -p $(DIST)
+	go run ./tools/buildclient -root . -out $(DIST)/lanbox-client.html
 
 ## checksums: 生成并打印 dist/SHA256SUMS
 checksums:
