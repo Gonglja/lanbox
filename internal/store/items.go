@@ -157,4 +157,3 @@ func (s *Store) Delete(id string) error {
 	delete(s.index, id)
 	return nil
 }
-

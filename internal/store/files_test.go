@@ -147,7 +147,7 @@ func TestSanitizeName(t *testing.T) {
 		"":                    "未命名文件",
 		".hidden":             "hidden",
 		"na\x00me\x1f.txt":    "name.txt",
-		"名字 带空格.md":            "名字 带空格.md",
+		"名字 带空格.md":           "名字 带空格.md",
 		"con:*?\"<>|trol.txt": "control.txt",
 	}
 	for in, want := range cases {
