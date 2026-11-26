@@ -46,7 +46,7 @@ type Config struct {
 // Defaults 返回可直接使用的默认配置。
 func Defaults() Config {
 	c := Config{
-		Listen:          ":8443",
+		Listen:          ":443",
 		DataDir:         "./data",
 		MaxFileSizeMB:   1024,
 		MaxItemSizeMB:   2048,
@@ -240,7 +240,7 @@ func parseBool(v string) (bool, error) {
 // Validate 校验配置自洽性，返回面向使用者的中文错误。
 func (c Config) Validate() error {
 	if c.Listen == "" {
-		return errors.New("listen 不能为空，例如 \":8443\"")
+		return errors.New("listen 不能为空，例如 \":443\"")
 	}
 	if c.DataDir == "" {
 		return errors.New("data_dir 不能为空")
@@ -303,15 +303,15 @@ func validateLabel(s, field string) error {
 	return nil
 }
 
-// ListenPort 从 listen 取端口，解析失败回落 8443。
+// ListenPort 从 listen 取端口，解析失败回落 443。
 func (c Config) ListenPort() int {
 	_, port, err := net.SplitHostPort(c.Listen)
 	if err != nil {
-		return 8443
+		return 443
 	}
 	n, err := strconv.Atoi(port)
 	if err != nil || n <= 0 || n > 65535 {
-		return 8443
+		return 443
 	}
 	return n
 }

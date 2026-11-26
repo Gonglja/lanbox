@@ -21,7 +21,7 @@ const GROUPS = [
   {
     title: '网络与证书',
     fields: [
-      { key: 'listen', label: '监听地址', type: 'text', hint: '如 :8443 或 192.168.1.9:8443' },
+      { key: 'listen', label: '监听地址', type: 'text', hint: '如 :443 或 192.168.1.9:443（改后需重启）' },
       { key: 'tls.cert_file', label: '证书文件', type: 'text', hint: '留空则用自签证书' },
       { key: 'tls.key_file', label: '私钥文件', type: 'text', hint: '与证书同时留空或同时填写' },
       { key: 'data_dir', label: '数据目录', type: 'text' },

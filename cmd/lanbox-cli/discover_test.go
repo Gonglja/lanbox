@@ -41,6 +41,18 @@ func TestRenderServicesEmpty(t *testing.T) {
 	}
 }
 
+func TestBuildURLOmitsDefaultHTTPSPort(t *testing.T) {
+	cases := map[string]string{
+		"https://192.168.1.9":      buildURL("192.168.1.9", 443),
+		"https://192.168.1.9:8443": buildURL("192.168.1.9", 8443),
+	}
+	for want, got := range cases {
+		if got != want {
+			t.Fatalf("buildURL=%q，期望 %q", got, want)
+		}
+	}
+}
+
 func TestDecideServer(t *testing.T) {
 	orig := browseServices
 	defer func() { browseServices = orig }()

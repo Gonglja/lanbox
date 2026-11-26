@@ -221,6 +221,11 @@ func printAccessURLs(cfg config.Config, logger *log.Logger) {
 	if _, p, err := net.SplitHostPort(cfg.Listen); err == nil && p != "" {
 		portText = p
 	}
+	// 443 是 https 默认端口，打印时省略，避免出现 https://host:443。
+	addrSuffix := ":" + portText
+	if portText == "443" {
+		addrSuffix = ""
+	}
 	ips, err := tlsutil.LocalIPs()
 	if err != nil || len(ips) == 0 {
 		logger.Printf("info: 监听 %s（HTTPS）", cfg.Listen)
@@ -236,7 +241,7 @@ func printAccessURLs(cfg config.Config, logger *log.Logger) {
 			if strings.Contains(ip, ":") {
 				host = "[" + ip + "]"
 			}
-			url := "https://" + host + ":" + portText
+			url := "https://" + host + addrSuffix
 			if printed[url] {
 				continue
 			}
@@ -245,6 +250,6 @@ func printAccessURLs(cfg config.Config, logger *log.Logger) {
 		}
 	}
 	if cfg.MDNS.Enabled {
-		logger.Printf("  https://%s.local:%s （mDNS）", cfg.MDNS.Hostname, portText)
+		logger.Printf("  https://%s.local%s （mDNS）", cfg.MDNS.Hostname, addrSuffix)
 	}
 }

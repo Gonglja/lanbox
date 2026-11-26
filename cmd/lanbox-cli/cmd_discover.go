@@ -41,6 +41,9 @@ func buildURL(host string, port int) string {
 	if host == "" || port <= 0 {
 		return "-"
 	}
+	if port == 443 {
+		return fmt.Sprintf("https://%s", host)
+	}
 	return fmt.Sprintf("https://%s:%d", host, port)
 }
 
@@ -93,7 +96,7 @@ func decideServer(timeout time.Duration) (baseURL, fp string, err error) {
 	}
 	switch len(services) {
 	case 0:
-		return "", "", fmt.Errorf("%w: 请用 -s 指定服务地址，例如 -s https://192.168.1.9:8443（局域网内未发现 lanbox）", errUsage)
+		return "", "", fmt.Errorf("%w: 请用 -s 指定服务地址，例如 -s https://192.168.1.9（局域网内未发现 lanbox）", errUsage)
 	case 1:
 		s := services[0]
 		url := reachableURL(s)
