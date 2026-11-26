@@ -39,6 +39,7 @@ lanbox-cli put -r ./素材 -m "素材目录"      # 目录必须显式 -r
 
 # 查看与取回
 lanbox-cli ls -n 20
+lanbox-cli status                 # 服务/身份/内容与附件统计；管理员另有磁盘、用户数、存储路径、mDNS
 lanbox-cli files <ID>
 lanbox-cli get <ID> -o ./收件               # 按相对路径还原目录（单附件无目录时直接落到 basename）
 lanbox-cli get <ID> --zip ./all.zip         # 整条内容打包（已存在需 --force）
@@ -136,6 +137,8 @@ make dist     # 产出 dist/ 下 8 个静态二进制（服务端 + CLI 各 4 �
 - 覆盖文件固定在"文件/环境变量解析出的 `data_dir`"下：改过 `data_dir` 后，旧目录里的 `webconfig.json` 仍是真源
 - **救援**：把 `listen` 改成不可用的值（或端口被占用）时，服务启动会检测到并自动忽略该覆盖、回退到文件配置，日志有 `warn: 网页设置的 listen=... 绑定失败`；也可直接编辑/删除 `<data_dir>/webconfig.json`
 - 运行时健康检查：`GET /api/healthz`（无需登录，返回 `ok/name/version/uptime_s`）
+- 运行统计：`GET /api/stats`（需登录，返回内容条数/未取走/已取走、附件数与总字节；
+  管理员额外含 `users`、`disk.free_bytes`、`items_dir`、`listen`、`mdns`，非管理员响应里没有 `admin` 键）
 
 ## 局域网发现（mDNS）
 

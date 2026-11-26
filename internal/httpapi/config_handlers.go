@@ -11,6 +11,7 @@ import (
 
 // MDNSStatus 是 mDNS 通告状态（由 main 适配，避免 httpapi 依赖 internal/mdns）。
 type MDNSStatus struct {
+	Enabled  bool     `json:"enabled"`
 	Running  bool     `json:"running"`
 	Instance string   `json:"instance"`
 	Host     string   `json:"host"`

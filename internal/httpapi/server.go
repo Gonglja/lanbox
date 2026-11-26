@@ -94,6 +94,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/login", s.handleLogin)
 	s.mux.HandleFunc("POST /api/logout", s.withAuth(s.handleLogout))
 	s.mux.HandleFunc("GET /api/me", s.withAuth(s.handleMe))
+	s.mux.HandleFunc("GET /api/stats", s.withAuth(s.handleStats))
 	s.mux.HandleFunc("POST /api/password", s.withAuth(s.handleChangePassword))
 
 	s.mux.HandleFunc("GET /api/items", s.withAuth(s.handleListItems))

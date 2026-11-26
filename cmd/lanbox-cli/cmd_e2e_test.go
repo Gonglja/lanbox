@@ -29,6 +29,9 @@ type cmdEnv struct {
 	c      *client.Client
 	out    *bytes.Buffer
 	errOut *bytes.Buffer
+	srv    *httptest.Server
+	am     *auth.Manager
+	caFile string
 }
 
 // newCmdEnv 起一个 TLS 测试服务端，把自签证书写到文件供 -ca 使用，
@@ -91,6 +94,21 @@ func newCmdEnv(t *testing.T) *cmdEnv {
 		c:      c,
 		out:    &out,
 		errOut: &errOut,
+		srv:    srv,
+		am:     am,
+		caFile: caPath,
+	}
+}
+
+// loginAs 以另一个账号登录并覆盖本地会话文件，供非管理员用例使用。
+func (e *cmdEnv) loginAs(t *testing.T, user, pass string) {
+	t.Helper()
+	sess, err := client.Login(context.Background(), e.srv.URL, user, pass, e.srv.Client())
+	if err != nil {
+		t.Fatalf("以 %s 登录失败: %v", user, err)
+	}
+	if err := saveSession(sess); err != nil {
+		t.Fatalf("保存会话失败: %v", err)
 	}
 }
 
