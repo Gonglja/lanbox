@@ -3,8 +3,11 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -14,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"lanbox/internal/client"
 )
@@ -39,6 +43,7 @@ type globals struct {
 	json     bool
 	insecure bool
 	caFile   string
+	pinFP    string
 	stdout   io.Writer
 	stderr   io.Writer
 }
@@ -76,6 +81,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = cmdLogout(ctx, g, cmdArgs)
 	case "whoami":
 		err = cmdWhoami(ctx, g, cmdArgs)
+	case "discover":
+		err = cmdDiscover(g, cmdArgs)
 	case "put":
 		err = cmdPut(ctx, g, cmdArgs, os.Stdin)
 	case "ls":
@@ -181,6 +188,7 @@ func usage(w io.Writer) {
   login [-u 用户名]        登录并保存会话
   logout [--json]          注销并删除本地会话
   whoami                   显示当前身份
+  discover [-timeout 2s]   列出局域网内的 lanbox 实例（-json 输出机器可读）
   put [-m 文本] [-r] 路径…  发布文字/文件/目录（- 表示从 stdin 读文本）
   ls [-n 数量] [-q 关键词] [--todo] [-o]  列出内容（-o 同时打印附件）
   files ID                 列出某条内容的附件
@@ -193,9 +201,10 @@ func usage(w io.Writer) {
 `)
 }
 
-// resolveServer 按 -s > LANBOX_URL > 会话文件的顺序确定目标服务地址。
+// resolveServer 按 -s > LANBOX_URL > 会话文件 的顺序确定目标服务地址。
+// allowDiscover 为 true 时（只有 login 会这样用），前三者都没有才做局域网 mDNS 自动发现。
 // 显式地址与会话里的地址不一致时属于会话问题，提示重新登录。
-func resolveServer(g *globals, sess *client.Session) (string, error) {
+func resolveServer(g *globals, sess *client.Session, allowDiscover bool) (string, error) {
 	explicit := strings.TrimRight(g.server, "/")
 	if explicit == "" {
 		explicit = strings.TrimRight(os.Getenv("LANBOX_URL"), "/")
@@ -209,18 +218,33 @@ func resolveServer(g *globals, sess *client.Session) (string, error) {
 	if sess != nil && sess.URL != "" {
 		return sess.URL, nil
 	}
-	return "", fmt.Errorf("%w: 请用 -s 指定服务地址，例如 -s https://192.168.1.9:8443", errUsage)
+	if !allowDiscover {
+		return "", fmt.Errorf("%w: 尚未登录，请先运行 lanbox-cli login -s <地址>", errAuth)
+	}
+	base, fp, err := decideServer(2 * time.Second)
+	if err != nil {
+		return "", err
+	}
+	g.pinFP = fp
+	return base, nil
 }
 
 // newClient 读取会话并按全局选项组装客户端。
+// 没有会话时仍会先解析地址（可能是 mDNS 自动发现），再提示到该地址登录。
 func newClient(g *globals) (*client.Client, *client.Session, error) {
-	sess, err := loadSession()
+	sess, err := loadSessionOptional()
 	if err != nil {
 		return nil, nil, err
 	}
-	base, err := resolveServer(g, sess)
+	base, err := resolveServer(g, sess, false)
 	if err != nil {
 		return nil, nil, err
+	}
+	if sess == nil {
+		return nil, nil, fmt.Errorf("%w: 尚未登录，请先运行 lanbox-cli login -s <地址>", errAuth)
+	}
+	if sess.PinFP != "" && g.pinFP == "" {
+		g.pinFP = sess.PinFP
 	}
 	httpc, err := httpClient(g)
 	if err != nil {
@@ -237,6 +261,22 @@ func newClient(g *globals) (*client.Client, *client.Session, error) {
 func httpClient(g *globals) (*http.Client, error) {
 	trans := http.DefaultTransport.(*http.Transport).Clone()
 	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if g.pinFP != "" && !g.insecure && g.caFile == "" {
+		want := strings.ToLower(strings.TrimSpace(g.pinFP))
+		tlsCfg.InsecureSkipVerify = true
+		tlsCfg.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			if len(rawCerts) == 0 {
+				return errors.New("服务器未提供证书")
+			}
+			sum := sha256.Sum256(rawCerts[0])
+			got := hex.EncodeToString(sum[:])
+			if subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
+				return fmt.Errorf("证书指纹不匹配（通告 %s，实际 %s）；若证书已更换，请重新 discover 或使用 -ca", shortFP(want), shortFP(got))
+			}
+			return nil
+		}
+		fmt.Fprintf(g.stderr, "已按 mDNS 通告固定证书指纹 sha256:%s\n", shortFP(want))
+	}
 	if g.insecure {
 		tlsCfg.InsecureSkipVerify = true
 		fmt.Fprintln(g.stderr, "警告: 已跳过 TLS 证书校验（-insecure）")
@@ -276,7 +316,7 @@ func cmdLogin(ctx context.Context, g *globals, args []string, stdin *os.File) er
 		return err
 	}
 	// login 只认显式地址：此时还没有会话文件可参考。
-	server, err := resolveServer(g, nil)
+	server, err := resolveServer(g, nil, true)
 	if err != nil {
 		return err
 	}
@@ -292,6 +332,7 @@ func cmdLogin(ctx context.Context, g *globals, args []string, stdin *os.File) er
 	if err != nil {
 		return err
 	}
+	sess.PinFP = g.pinFP
 	if err := saveSession(sess); err != nil {
 		return err
 	}

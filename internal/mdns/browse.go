@@ -60,9 +60,9 @@ func browseWith(ctx context.Context, t transport, timeout time.Duration) ([]Serv
 		if err != nil || !m.Response {
 			continue
 		}
-		for _, inst := range st.consume(m) {
+		for _, qname := range st.consume(m) {
 			raw, err := (&message{Questions: []question{{
-				Name: inst + "." + serviceType, Type: typeANY, Class: classINET,
+				Name: qname, Type: typeANY, Class: classINET,
 			}}}).Pack()
 			if err == nil {
 				_, _ = t.send(raw, multicastIPv4)
@@ -82,7 +82,7 @@ func newBrowseState() *browseState {
 	return &browseState{instances: map[string]*Service{}, asked: map[string]bool{}, hostAddrs: map[string][]net.IP{}}
 }
 
-// consume 吸收一条响应，返回需要补查的实例名。
+// consume 吸收一条响应，返回需要补查的 FQDN（实例名与 SRV 目标主机）。
 func (s *browseState) consume(m *message) []string {
 	var pending []string
 	for _, rr := range m.Answers {
@@ -103,9 +103,9 @@ func (s *browseState) consume(m *message) []string {
 			if s.instances[inst] == nil {
 				s.instances[inst] = &Service{Instance: inst, Addrs: []net.IP{}, TXT: map[string]string{}}
 			}
-			if !s.asked[inst] {
-				s.asked[inst] = true
-				pending = append(pending, inst)
+			if key := "svc:" + inst; !s.asked[key] {
+				s.asked[key] = true
+				pending = append(pending, inst+"."+serviceType)
 			}
 		case typeSRV:
 			inst := trimServiceSuffix(rr.Name)
@@ -123,6 +123,10 @@ func (s *browseState) consume(m *message) []string {
 			}
 			svc.Port = int(port)
 			svc.Host = strings.TrimSuffix(strings.ToLower(target), ".local")
+			if key := "host:" + svc.Host; svc.Host != "" && !s.asked[key] {
+				s.asked[key] = true
+				pending = append(pending, svc.Host+".local")
+			}
 		case typeTXT:
 			inst := trimServiceSuffix(rr.Name)
 			if inst == "" {

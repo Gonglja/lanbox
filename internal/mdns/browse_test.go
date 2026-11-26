@@ -14,7 +14,7 @@ func TestBrowseStateConsume(t *testing.T) {
 		Name: serviceType, Type: typePTR, Class: classINET, TTL: 120,
 		Data: mustPTR("office." + serviceType),
 	}}}
-	if pending := st.consume(ptr); len(pending) != 1 || pending[0] != "office" {
+	if pending := st.consume(ptr); len(pending) != 1 || pending[0] != "office."+serviceType {
 		t.Fatalf("应产生 office 待查询，得到 %+v", pending)
 	}
 	srv := &message{Response: true, Answers: []record{
@@ -22,7 +22,9 @@ func TestBrowseStateConsume(t *testing.T) {
 		{Name: "office." + serviceType, Type: typeTXT, Class: classINET, TTL: 120, Data: rdataTXT(map[string]string{"v": "1", "fp": "abc123"})},
 		{Name: "nas.local", Type: typeA, Class: classINET, TTL: 120, Data: net.IPv4(192, 168, 1, 9).To4()},
 	}}
-	st.consume(srv)
+	if pending := st.consume(srv); len(pending) != 1 || pending[0] != "nas.local" {
+		t.Fatalf("应补查 SRV 目标主机，得到 %+v", pending)
+	}
 
 	services := st.services()
 	if len(services) != 1 {
