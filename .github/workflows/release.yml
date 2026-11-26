@@ -131,21 +131,22 @@ jobs:
           set -euo pipefail
           SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/android-sdk}}"
           mkdir -p "$SDK/cmdline-tools"
-          echo "::warning title=sdk::SDK=$SDK"
           if [ ! -x "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
-            curl -fsSL -o /tmp/cmdline-tools.zip               https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip               || { echo "::error::下载 cmdline-tools 失败"; exit 1; }
+            curl -fsSL -o /tmp/cmdline-tools.zip \
+              https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip \
+              || { echo "::error::下载 cmdline-tools 失败"; exit 1; }
             rm -rf /tmp/cmdline-tools "$SDK/cmdline-tools/latest"
             unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools
             mv /tmp/cmdline-tools/cmdline-tools "$SDK/cmdline-tools/latest"
           fi
           SDKMAN="$SDK/cmdline-tools/latest/bin/sdkmanager"
-          echo "::warning title=sdk::SDKMAN=$SDKMAN"
           yes | "$SDKMAN" --sdk_root="$SDK" --licenses >/dev/null 2>&1 || true
-          if ! "$SDKMAN" --sdk_root="$SDK" --install                  "platforms;android-35" "build-tools;35.0.0" "ndk;${NDK_VERSION}" > /tmp/sdk.log 2>&1; then
+          if ! "$SDKMAN" --sdk_root="$SDK" --install \
+                 "platforms;android-35" "build-tools;35.0.0" "ndk;${NDK_VERSION}" > /tmp/sdk.log 2>&1; then
             tail -15 /tmp/sdk.log | while IFS= read -r l; do echo "::error title=sdkmanager::$(printf '%s' "$l" | cut -c1-350)"; done
             exit 1
           fi
-          echo "::warning title=sdk::ndk=$(ls "$SDK/ndk" | paste -sd' ' -)"
+          echo "::notice::Android SDK 就绪: $SDK（NDK: $(ls "$SDK/ndk" | paste -sd' ' -)）"
           {
             echo "ANDROID_SDK_ROOT=$SDK"
             echo "ANDROID_HOME=$SDK"

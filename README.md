@@ -288,6 +288,9 @@ CI 跑 `go vet` + `go test`（gofmt 只打告警不阻塞）→ `make dist`（Li
 - tag 里带 `-rc1` / `-beta` 之类后缀会发布成 **prerelease**。
 - 手动重跑：Actions → release → Run workflow，**ref 必须选 Tags 下的 tag**。
 - 构建产物同时作为 workflow artifact 保留 14 天，方便排查失败。
+- Android 侧不依赖第三方 action：workflow 自己下 `cmdline-tools`，用 `sdkmanager` 装
+  `platforms;android-35` + `build-tools;35.0.0` + `ndk;27.0.12077973`（与 Makefile 默认一致）。
+- 失败时会把关键错误行以 `::error::` annotation 贴到运行页（完整日志要登录才能看）。
 
 ## 在线更新
 
