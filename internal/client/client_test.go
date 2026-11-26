@@ -1,11 +1,13 @@
 package client_test
 
 import (
+	"archive/zip"
 	"context"
 	"errors"
 	"io"
 	"log"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -289,5 +291,133 @@ func TestPutKeepsNestedPaths(t *testing.T) {
 	}
 	if it.Files[0].Path != "素材/2024/a.jpg" || it.Files[1].Path != "素材/b.txt" {
 		t.Fatalf("中文目录路径应保留: %+v", it.Files)
+	}
+}
+
+func TestDownloadFileRestoresPathAndVerifies(t *testing.T) {
+	e := newTestEnv(t)
+	c := loginClient(t, e)
+	ctx := context.Background()
+	it, err := c.Put(ctx, "", []client.Upload{
+		{Path: "photos/a.txt", Size: 5, Open: readerFunc("hello")},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "photos", "a.txt")
+	if err := c.DownloadFile(ctx, it.ID, it.Files[0], client.DownloadOptions{Dest: dest}); err != nil {
+		t.Fatalf("下载失败: %v", err)
+	}
+	raw, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "hello" {
+		t.Fatalf("内容不对: %q", raw)
+	}
+	if _, err := os.Stat(dest + ".part"); !os.IsNotExist(err) {
+		t.Fatal("临时文件应已清理")
+	}
+}
+
+func TestDownloadFileRefusesExistingWithoutForce(t *testing.T) {
+	e := newTestEnv(t)
+	c := loginClient(t, e)
+	ctx := context.Background()
+	it, err := c.Put(ctx, "", []client.Upload{{Path: "a.txt", Size: 1, Open: readerFunc("a")}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "a.txt")
+	if err := os.WriteFile(dest, []byte("old"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.DownloadFile(ctx, it.ID, it.Files[0], client.DownloadOptions{Dest: dest}); !errors.Is(err, client.ErrExists) {
+		t.Fatalf("应返回 ErrExists，得到 %v", err)
+	}
+	if err := c.DownloadFile(ctx, it.ID, it.Files[0], client.DownloadOptions{Dest: dest, Force: true}); err != nil {
+		t.Fatalf("force 覆盖失败: %v", err)
+	}
+	raw, _ := os.ReadFile(dest)
+	if string(raw) != "a" {
+		t.Fatalf("覆盖后内容不对: %q", raw)
+	}
+}
+
+func TestDownloadFileResume(t *testing.T) {
+	e := newTestEnv(t)
+	c := loginClient(t, e)
+	ctx := context.Background()
+	body := strings.Repeat("0123456789", 100)
+	it, err := c.Put(ctx, "", []client.Upload{
+		{Path: "big.bin", Size: int64(len(body)), Open: readerFunc(body)},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "big.bin")
+	if err := os.WriteFile(dest+".part", []byte(body[:400]), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.DownloadFile(ctx, it.ID, it.Files[0], client.DownloadOptions{Dest: dest, Resume: true}); err != nil {
+		t.Fatalf("续传下载失败: %v", err)
+	}
+	raw, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != body {
+		t.Fatalf("续传后内容长度 %d，期望 %d", len(raw), len(body))
+	}
+}
+
+func TestDownloadFileDetectsChecksumMismatch(t *testing.T) {
+	e := newTestEnv(t)
+	c := loginClient(t, e)
+	ctx := context.Background()
+	it, err := c.Put(ctx, "", []client.Upload{{Path: "a.txt", Size: 3, Open: readerFunc("abc")}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := it.Files[0]
+	bad.SHA256 = strings.Repeat("0", 64)
+	dest := filepath.Join(t.TempDir(), "a.txt")
+	if err := c.DownloadFile(ctx, it.ID, bad, client.DownloadOptions{Dest: dest}); err == nil {
+		t.Fatal("校验不匹配应报错")
+	}
+	if _, err := os.Stat(dest); !os.IsNotExist(err) {
+		t.Fatal("校验失败不应留下目标文件")
+	}
+	if _, err := os.Stat(dest + ".part"); !os.IsNotExist(err) {
+		t.Fatal("校验失败应删除临时文件")
+	}
+}
+
+func TestDownloadZip(t *testing.T) {
+	e := newTestEnv(t)
+	c := loginClient(t, e)
+	ctx := context.Background()
+	it, err := c.Put(ctx, "", []client.Upload{
+		{Path: "d/a.txt", Size: 1, Open: readerFunc("a")},
+		{Path: "b.txt", Size: 1, Open: readerFunc("b")},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "out.zip")
+	if err := c.DownloadZip(ctx, it.ID, dest); err != nil {
+		t.Fatalf("下载 zip 失败: %v", err)
+	}
+	zr, err := zip.OpenReader(dest)
+	if err != nil {
+		t.Fatalf("zip 损坏: %v", err)
+	}
+	defer zr.Close()
+	names := []string{}
+	for _, f := range zr.File {
+		names = append(names, f.Name)
+	}
+	if len(names) != 2 || names[0] != "d/a.txt" || names[1] != "b.txt" {
+		t.Fatalf("zip 条目不对: %+v", names)
 	}
 }

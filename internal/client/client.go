@@ -130,7 +130,7 @@ func Login(ctx context.Context, baseURL, username, password string, httpc *http.
 		URL:      strings.TrimRight(baseURL, "/"),
 		Username: me.Username,
 		SID:      sid,
-		SavedAt:  timeNow(),
+		SavedAt:  time.Now(),
 	}, nil
 }
 
@@ -247,6 +247,3 @@ func (c *Client) DeleteFile(ctx context.Context, itemID, fileID string) error {
 	resp.Body.Close()
 	return nil
 }
-
-// timeNow 是便于测试替换的时间源。
-var timeNow = time.Now
