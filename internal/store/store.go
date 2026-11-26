@@ -29,8 +29,12 @@ var (
 	ErrItemTooLarge = errors.New("内容总大小超过上限")
 )
 
-// MaxFilesPerItem 是单条内容的附件数量上限。
-const MaxFilesPerItem = 20
+const (
+	// DefaultMaxFiles 是单条内容附件数量的默认上限。
+	DefaultMaxFiles = 500
+	// DefaultMaxItemBytes 是单条内容附件总大小的默认上限（2 GiB）。
+	DefaultMaxItemBytes = 2 << 30
+)
 
 // File 是一个附件。
 type File struct {
@@ -92,6 +96,8 @@ type Options struct {
 	MaxFileBytes int64
 	MinFreeBytes int64
 	MaxTextBytes int
+	MaxFiles     int   // 单条内容的附件数量上限，0 表示 DefaultMaxFiles
+	MaxItemBytes int64 // 单条内容的附件总字节上限，0 表示不限
 	FreeSpace    func(path string) (int64, error)
 }
 

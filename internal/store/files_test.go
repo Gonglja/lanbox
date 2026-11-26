@@ -82,9 +82,9 @@ func TestAddFileDiskGuard(t *testing.T) {
 }
 
 func TestAddFileLimitPerItem(t *testing.T) {
-	s := newStore(t, Options{})
+	s := newStore(t, Options{MaxFiles: 3})
 	it, _ := s.Create(CreateInput{Text: "x", CreatedBy: "u"})
-	for i := 0; i < MaxFilesPerItem; i++ {
+	for i := 0; i < 3; i++ {
 		if _, err := s.AddFile(it.ID, "f.bin", 1, bytes.NewReader([]byte("a"))); err != nil {
 			t.Fatalf("第 %d 个附件失败: %v", i, err)
 		}
@@ -281,5 +281,87 @@ func TestMatchMatchesNestedPath(t *testing.T) {
 	legacy := &Item{Files: []File{{ID: "f2", Name: "a.txt"}}}
 	if !legacy.match("a.txt") {
 		t.Fatal("旧数据（无 path）仍应按文件名命中")
+	}
+}
+
+func TestAddFileKeepsRelativePath(t *testing.T) {
+	s := newStore(t, Options{})
+	it, _ := s.Create(CreateInput{Text: "x", CreatedBy: "u"})
+	got, err := s.AddFile(it.ID, `photos\2024/a.jpg`, 3, bytes.NewReader([]byte("abc")))
+	if err != nil {
+		t.Fatalf("写附件失败: %v", err)
+	}
+	f := got.Files[0]
+	if f.Path != "photos/2024/a.jpg" || f.Name != "a.jpg" {
+		t.Fatalf("路径/名字不对: %+v", f)
+	}
+	disk, _, err := s.FilePath(it.ID, f.ID)
+	if err != nil {
+		t.Fatalf("定位附件失败: %v", err)
+	}
+	if filepath.Base(disk) != f.ID+"__a.jpg" {
+		t.Fatalf("磁盘名应保持扁平: %s", disk)
+	}
+}
+
+func TestAddFileDedupesSamePath(t *testing.T) {
+	s := newStore(t, Options{})
+	it, _ := s.Create(CreateInput{Text: "x", CreatedBy: "u"})
+	if _, err := s.AddFile(it.ID, "A.txt", 1, bytes.NewReader([]byte("1"))); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.AddFile(it.ID, "a.txt", 1, bytes.NewReader([]byte("2")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Files[1].Path != "a~2.txt" {
+		t.Fatalf("大小写不同的同名应去重为 a~2.txt，得到 %q", got.Files[1].Path)
+	}
+	got, err = s.AddFile(it.ID, "a.txt", 1, bytes.NewReader([]byte("3")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Files[2].Path != "a~3.txt" {
+		t.Fatalf("第三次应为 a~3.txt，得到 %q", got.Files[2].Path)
+	}
+}
+
+func TestAddFileRejectsBadPath(t *testing.T) {
+	s := newStore(t, Options{})
+	it, _ := s.Create(CreateInput{Text: "x", CreatedBy: "u"})
+	if _, err := s.AddFile(it.ID, "../escape.txt", 1, bytes.NewReader([]byte("x"))); !errors.Is(err, ErrBadPath) {
+		t.Fatalf("应报 ErrBadPath，得到 %v", err)
+	}
+	after, _ := s.Get(it.ID)
+	if len(after.Files) != 0 {
+		t.Fatalf("失败不应留下附件记录: %+v", after.Files)
+	}
+}
+
+func TestAddFileRejectsItemOversize(t *testing.T) {
+	s := newStore(t, Options{MaxItemBytes: 5})
+	it, _ := s.Create(CreateInput{Text: "x", CreatedBy: "u"})
+	if _, err := s.AddFile(it.ID, "a.bin", 5, bytes.NewReader([]byte("12345"))); err != nil {
+		t.Fatalf("刚好到上限应成功: %v", err)
+	}
+	if _, err := s.AddFile(it.ID, "b.bin", 1, bytes.NewReader([]byte("6"))); !errors.Is(err, ErrItemTooLarge) {
+		t.Fatalf("超过单条上限应报 ErrItemTooLarge，得到 %v", err)
+	}
+	after, _ := s.Get(it.ID)
+	if len(after.Files) != 1 || after.Files[0].Path != "a.bin" {
+		t.Fatalf("失败后不应追加附件: %+v", after.Files)
+	}
+}
+
+func TestAddFileMaxFilesOption(t *testing.T) {
+	s := newStore(t, Options{MaxFiles: 2})
+	it, _ := s.Create(CreateInput{Text: "x", CreatedBy: "u"})
+	for i := 0; i < 2; i++ {
+		if _, err := s.AddFile(it.ID, "f.bin", 1, bytes.NewReader([]byte("a"))); err != nil {
+			t.Fatalf("第 %d 个附件失败: %v", i, err)
+		}
+	}
+	if _, err := s.AddFile(it.ID, "f.bin", 1, bytes.NewReader([]byte("a"))); !errors.Is(err, ErrTooManyFiles) {
+		t.Fatalf("超过 MaxFiles 应报 ErrTooManyFiles，得到 %v", err)
 	}
 }
