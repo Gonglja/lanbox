@@ -1,0 +1,214 @@
+package client_test
+
+import (
+	"context"
+	"errors"
+	"io"
+	"log"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"lanbox"
+	"lanbox/internal/auth"
+	"lanbox/internal/client"
+	"lanbox/internal/config"
+	"lanbox/internal/httpapi"
+	"lanbox/internal/store"
+)
+
+type testEnv struct {
+	url   string
+	https *httptest.Server
+	pw    string
+	store *store.Store
+}
+
+// newTestEnv 起一个真实的 TLS 服务端，与 httpapi 测试夹具同构。
+func newTestEnv(t *testing.T) *testEnv {
+	t.Helper()
+	cfg := config.Defaults()
+	cfg.DataDir = t.TempDir()
+	cfg.MaxFileSizeMB = 8
+	cfg.MinFreeDiskMB = 0
+	cfg.MaxFilesPerItem = 50
+	cfg.MaxItemSizeMB = 64
+
+	st, err := store.Open(filepath.Join(cfg.DataDir, "items"), store.Options{
+		MaxFileBytes: cfg.MaxFileBytes(),
+		MinFreeBytes: cfg.MinFreeBytes(),
+		MaxTextBytes: cfg.MaxTextBytes,
+		MaxFiles:     cfg.MaxFilesPerItem,
+		MaxItemBytes: cfg.MaxItemBytes(),
+	})
+	if err != nil {
+		t.Fatalf("打开 store 失败: %v", err)
+	}
+	am, err := auth.Open(filepath.Join(cfg.DataDir, "users.json"), time.Hour)
+	if err != nil {
+		t.Fatalf("打开 auth 失败: %v", err)
+	}
+	pw, _, err := am.BootstrapAdmin()
+	if err != nil {
+		t.Fatalf("初始化管理员失败: %v", err)
+	}
+	srv := httptest.NewTLSServer(httpapi.New(httpapi.Options{
+		Cfg: cfg, Store: st, Auth: am, Web: lanbox.WebFS(), Log: log.New(io.Discard, "", 0),
+	}))
+	t.Cleanup(srv.Close)
+	return &testEnv{url: srv.URL, https: srv, pw: pw, store: st}
+}
+
+func loginClient(t *testing.T, e *testEnv) *client.Client {
+	t.Helper()
+	httpc := e.https.Client() // 已信任测试证书
+	sess, err := client.Login(context.Background(), e.url, "admin", e.pw, httpc)
+	if err != nil {
+		t.Fatalf("登录失败: %v", err)
+	}
+	c, err := client.New(client.Options{BaseURL: sess.URL, SID: sess.SID, HTTP: httpc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func TestLoginAndMe(t *testing.T) {
+	e := newTestEnv(t)
+	httpc := e.https.Client()
+	sess, err := client.Login(context.Background(), e.url, "admin", e.pw, httpc)
+	if err != nil {
+		t.Fatalf("登录失败: %v", err)
+	}
+	if sess.SID == "" || sess.Username != "admin" {
+		t.Fatalf("会话内容不对: %+v", sess)
+	}
+	c, err := client.New(client.Options{BaseURL: sess.URL, SID: sess.SID, HTTP: httpc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	me, err := c.Me(context.Background())
+	if err != nil {
+		t.Fatalf("获取身份失败: %v", err)
+	}
+	if me.Username != "admin" || !me.IsAdmin {
+		t.Fatalf("身份不对: %+v", me)
+	}
+}
+
+func TestLoginWrongPassword(t *testing.T) {
+	e := newTestEnv(t)
+	_, err := client.Login(context.Background(), e.url, "admin", "wrong-password", e.https.Client())
+	var ae *client.Error
+	if !errors.As(err, &ae) || ae.Status != 401 || ae.Code != "bad_credentials" {
+		t.Fatalf("应返回 401 bad_credentials，得到 %v", err)
+	}
+}
+
+func TestListGetTakenAndDelete(t *testing.T) {
+	e := newTestEnv(t)
+	c := loginClient(t, e)
+	ctx := context.Background()
+
+	seeded, err := e.store.Create(store.CreateInput{Text: "内网素材", CreatedBy: "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seeded, err = e.store.AddFile(seeded.ID, "photos/a.jpg", 3, strings.NewReader("aaa"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := c.List(ctx, client.ListQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("列表失败: %v", err)
+	}
+	if len(res.Items) != 1 || res.Items[0].ID != seeded.ID || res.Items[0].Text != "内网素材" {
+		t.Fatalf("列表内容不对: %+v", res.Items)
+	}
+	if res.Items[0].TotalSize() != 3 {
+		t.Fatalf("总大小应为 3，得到 %d", res.Items[0].TotalSize())
+	}
+
+	got, err := c.GetItem(ctx, seeded.ID)
+	if err != nil {
+		t.Fatalf("读取内容失败: %v", err)
+	}
+	if len(got.Files) != 1 || got.Files[0].Path != "photos/a.jpg" || got.Files[0].RelPath() != "photos/a.jpg" {
+		t.Fatalf("附件路径不对: %+v", got.Files)
+	}
+
+	marked, err := c.Taken(ctx, seeded.ID, true)
+	if err != nil {
+		t.Fatalf("标记已取走失败: %v", err)
+	}
+	if !marked.Taken || marked.TakenBy != "admin" {
+		t.Fatalf("标记结果不对: %+v", marked)
+	}
+
+	if err := c.DeleteFile(ctx, seeded.ID, seeded.Files[0].ID); err != nil {
+		t.Fatalf("删除附件失败: %v", err)
+	}
+	if err := c.DeleteItem(ctx, seeded.ID); err != nil {
+		t.Fatalf("删除失败: %v", err)
+	}
+	after, err := c.List(ctx, client.ListQuery{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Items) != 0 {
+		t.Fatalf("删除后列表应为空: %+v", after.Items)
+	}
+}
+
+func TestClientRejectsBadBaseURL(t *testing.T) {
+	for _, bad := range []string{"", "not-a-url", "ftp://example.com"} {
+		if _, err := client.New(client.Options{BaseURL: bad}); err == nil {
+			t.Fatalf("%q 应报错", bad)
+		}
+	}
+}
+
+func TestListTodoFilter(t *testing.T) {
+	e := newTestEnv(t)
+	c := loginClient(t, e)
+	ctx := context.Background()
+
+	todoItem, err := e.store.Create(store.CreateInput{Text: "待取的发票", CreatedBy: "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	doneItem, err := e.store.Create(store.CreateInput{Text: "已归档的合同", CreatedBy: "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.SetTaken(doneItem.ID, true, "admin"); err != nil {
+		t.Fatal(err)
+	}
+
+	todo, err := c.List(ctx, client.ListQuery{Limit: 10, Todo: true})
+	if err != nil {
+		t.Fatalf("过滤未取走失败: %v", err)
+	}
+	if len(todo.Items) != 1 || todo.Items[0].ID != todoItem.ID {
+		t.Fatalf("未取走应只剩 1 条: %+v", todo.Items)
+	}
+
+	all, err := c.List(ctx, client.ListQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("列表失败: %v", err)
+	}
+	if len(all.Items) != 2 {
+		t.Fatalf("全部应返回 2 条: %+v", all.Items)
+	}
+
+	found, err := c.List(ctx, client.ListQuery{Limit: 10, Search: "合同"})
+	if err != nil {
+		t.Fatalf("搜索失败: %v", err)
+	}
+	if len(found.Items) != 1 || found.Items[0].ID != doneItem.ID {
+		t.Fatalf("搜索应命中已归档的合同: %+v", found.Items)
+	}
+}
