@@ -26,6 +26,12 @@ type Options struct {
 	Discover   DiscoverFunc
 	StartedAt  time.Time
 	Version    string
+
+	// AllowLoopbackLogin 打开回环引导登录（只有 Android App 会设）。
+	AllowLoopbackLogin bool
+	LoopbackToken      string
+	// RestartDisabled 为 true 时 /api/config/restart 返回 501（手机上没有进程重启）。
+	RestartDisabled bool
 }
 
 // Server 是 lanbox 的 HTTP 处理入口。
@@ -45,6 +51,10 @@ type Server struct {
 
 	// discover 由 main 注入（内部用 internal/mdns）；结果缓存 discoverCacheTTL。
 	discover      DiscoverFunc
+	allowLoopback   bool
+	loopbackToken   string
+	restartDisabled  bool
+	loopbackLimiter *auth.Limiter
 	discoverMu    sync.Mutex
 	discoverCache []DiscoveredServer
 	discoverAt    time.Time
@@ -72,6 +82,10 @@ func New(opts Options) *Server {
 		live:       opts.Live,
 		mdnsStatus: opts.MDNSStatus,
 		discover:   opts.Discover,
+		allowLoopback:   opts.AllowLoopbackLogin,
+		loopbackToken:   opts.LoopbackToken,
+		restartDisabled:  opts.RestartDisabled,
+		loopbackLimiter: auth.NewLimiter(time.Minute, 10, time.Minute),
 		startedAt:  opts.StartedAt,
 		version:    opts.Version,
 	}

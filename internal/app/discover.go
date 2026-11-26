@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -15,15 +15,15 @@ import (
 // browseTimeout 是浏览局域网实例的等待时间：一次往返足够，再长界面就该等急了。
 const browseTimeout = 1500 * time.Millisecond
 
-// discoverServers 把 mDNS 浏览结果适配成 /api/discover 的响应。
-// httpapi 不 import internal/mdns，这个适配层放在 main 里。
-func discoverServers(m *mdnsRunner, live *config.Live) httpapi.DiscoverFunc {
+// DiscoverServers 把 mDNS 浏览结果适配成 /api/discover 的响应。
+// httpapi 不 import internal/mdns，这个适配层放在这里。
+func DiscoverServers(m *MDNSRunner, live *config.Live) httpapi.DiscoverFunc {
 	return func(ctx context.Context) ([]httpapi.DiscoveredServer, error) {
 		svcs, err := mdns.Browse(ctx, browseTimeout)
 		if err != nil {
 			return nil, err
 		}
-		self := m.status(live.Current()).Instance
+		self := m.Status(live.Current()).Instance
 		out := make([]httpapi.DiscoveredServer, 0, len(svcs))
 		for _, svc := range svcs {
 			host := strings.TrimSuffix(strings.TrimSuffix(svc.Host, "."), ".local")

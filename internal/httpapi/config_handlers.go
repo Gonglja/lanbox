@@ -146,6 +146,11 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "config_unavailable", "配置服务未就绪")
 		return
 	}
+	if s.restartDisabled {
+		// 手机上没有「重启进程」的语义：服务由 App 的前台 Service 托管。
+		writeError(w, http.StatusNotImplemented, "not_supported", "当前运行环境不支持自重启，请关开服务")
+		return
+	}
 	if !s.live.RequestRestart() {
 		writeError(w, http.StatusTooManyRequests, "restart_cooldown", "重启过于频繁，请稍后再试")
 		return
