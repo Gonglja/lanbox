@@ -79,6 +79,8 @@ func run() error {
 		MaxFileBytes: cfg.MaxFileBytes(),
 		MinFreeBytes: cfg.MinFreeBytes(),
 		MaxTextBytes: cfg.MaxTextBytes,
+		MaxFiles:     cfg.MaxFilesPerItem,
+		MaxItemBytes: cfg.MaxItemBytes(),
 	})
 	if err != nil {
 		return err
