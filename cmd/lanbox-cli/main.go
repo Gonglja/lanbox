@@ -167,7 +167,7 @@ func printAndCode(err error, stderr io.Writer) int {
 func (g *globals) globalFS(name string, out io.Writer) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(out)
-	fs.StringVar(&g.server, "s", g.server, "服务地址，如 https://192.168.1.9:8443")
+	fs.StringVar(&g.server, "s", g.server, "服务地址，如 https://192.168.1.9（默认 443 端口）")
 	fs.BoolVar(&g.json, "json", g.json, "输出机器可读 JSON")
 	fs.BoolVar(&g.insecure, "insecure", g.insecure, "跳过 TLS 证书校验（不安全）")
 	fs.StringVar(&g.caFile, "ca", g.caFile, "信任指定的 PEM 证书文件")

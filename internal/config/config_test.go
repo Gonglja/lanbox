@@ -13,7 +13,7 @@ func TestDefaultsWhenFileMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("缺失文件不应报错: %v", err)
 	}
-	if c.Listen != ":8443" || c.DataDir != "./data" {
+	if c.Listen != ":443" || c.DataDir != "./data" {
 		t.Fatalf("默认监听/目录不对: %+v", c)
 	}
 	if c.MaxFileBytes() != 1024<<20 {
@@ -210,12 +210,12 @@ func TestMDNSValidation(t *testing.T) {
 
 func TestListenPort(t *testing.T) {
 	cases := map[string]int{
+		":443":         443,
 		":8443":        8443,
 		"0.0.0.0:9443": 9443,
-		"[::1]:443":    443,
-		"":             8443,
-		"bad":          8443,
-		":notaport":    8443,
+		"":             443,
+		"bad":          443,
+		":notaport":    443,
 	}
 	for in, want := range cases {
 		c := Defaults()

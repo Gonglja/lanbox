@@ -16,11 +16,11 @@
 # 1. 编译本机架构（需要 Go 1.25+，仅标准库）
 make build          # 等价于 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=..." -o lanbox ./cmd/lanbox
 
-# 2. 直接运行（默认监听 :8443，数据在 ./data）
+# 2. 直接运行（默认监听 :443，数据在 ./data；绑定 443 需 root 或 setcap）
 ./lanbox
 
 # 3. 首次启动会打印 admin 的随机密码，请立即保存
-#    然后浏览器打开 https://<小主机IP>:8443
+#    然后浏览器打开 https://<小主机IP>
 ```
 
 ## 命令行客户端 lanbox-cli
@@ -29,7 +29,7 @@ make build          # 等价于 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w
 
 ```bash
 # 登录（服务地址与密码；自签证书用 -ca 或 -insecure）
-LANBOX_PASSWORD='...' lanbox-cli login -s https://192.168.1.9:8443 -u admin
+LANBOX_PASSWORD='...' lanbox-cli login -s https://192.168.1.9 -u admin
 # 密码来源优先级：LANBOX_PASSWORD 环境变量 > 管道 stdin > 终端无回显提示
 
 # 发布文字 / 文件 / 整个目录
@@ -54,7 +54,7 @@ lanbox-cli logout
 
 - 退出码：`0` 成功、`1` 一般错误、`2` 用法错误、`3` 网络/证书错误、`4` 认证或会话问题。
 - 会话保存在 `~/.config/lanbox/session.json`（0600，可用 `XDG_CONFIG_HOME` 改位置）。**会话不保存 TLS 选项**，所以每条命令都要重复 `-ca`/`-insecure`；也可以把 `data/tls/cert.pem` 导入系统信任库，之后就不必再传。
-- 全局选项可写在子命令前后：`lanbox-cli -s https://host:8443 ls` 等价于 `lanbox-cli ls -s https://host:8443`。
+- 全局选项可写在子命令前后：`lanbox-cli -s https://host ls` 等价于 `lanbox-cli ls -s https://host`（非默认端口写 `https://host:8443`）。
 
 ## 交叉编译（小主机常见是 ARM）
 
@@ -95,7 +95,7 @@ make dist     # 产出 dist/ 下 8 个静态二进制（服务端 + CLI 各 4 �
 
 ```json
 {
-  "listen": ":8443",
+  "listen": ":443",
   "data_dir": "./data",
   "tls": { "cert_file": "", "key_file": "" },
   "max_file_size_mb": 1024,
@@ -110,7 +110,7 @@ make dist     # 产出 dist/ 下 8 个静态二进制（服务端 + CLI 各 4 �
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| `listen` | `:8443` | 监听地址。只对某一网卡开放可写 `192.168.1.9:8443` |
+| `listen` | `:443` | 监听地址。只对某一网卡开放可写 `192.168.1.9:443`。443 属特权端口，非 root 运行需 `setcap cap_net_bind_service=+ep ./lanbox`（systemd 用 `AmbientCapabilities`）；网页「设置」里改此项后需重启生效 |
 | `data_dir` | `./data` | 数据目录（内容、用户库、证书） |
 | `tls.cert_file` / `tls.key_file` | 空 | 同时填写则使用你自己的证书；留空则自动生成自签证书 |
 | `max_file_size_mb` | 1024 | 单文件上限；实际生效的是 `min(单文件上限, 单条剩余额度)`，超过单条额度返回 `item_too_large`(413) |
@@ -148,7 +148,7 @@ make dist     # 产出 dist/ 下 8 个静态二进制（服务端 + CLI 各 4 �
 - 主机名：`<mdns.hostname>.local`
 - TXT：`v=1`、`name=<实例名>`、`tls=1`、`auth=1`、`fp=<叶证书 SHA-256>`
 
-因此可以直接访问 `https://lanbox.local:8443`（自签证书仍需首次信任）。手机、macOS、Linux 均可解析 `.local`。
+因此可以直接访问 `https://lanbox.local`（自签证书仍需首次信任）。手机、macOS、Linux 均可解析 `.local`。
 
 CLI：
 
@@ -197,7 +197,7 @@ sudo chown -R lanbox:lanbox /opt/lanbox /var/lib/lanbox
 
 sudo tee /etc/lanbox/config.json >/dev/null <<'EOF'
 {
-  "listen": ":8443",
+  "listen": ":443",
   "data_dir": "/var/lib/lanbox"
 }
 EOF

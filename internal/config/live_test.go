@@ -47,7 +47,7 @@ func TestLiveUpdateHotAndRestartFields(t *testing.T) {
 	if _, err := l.DropWebOverride("listen"); err != nil {
 		t.Fatal(err)
 	}
-	if l.Current().Listen != ":8443" {
+	if l.Current().Listen != ":443" {
 		t.Fatalf("DropWebOverride 后 listen 应回到默认: %s", l.Current().Listen)
 	}
 }
