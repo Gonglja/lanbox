@@ -1,5 +1,6 @@
 data/
 /lanbox
+/lanbox-cli
 /dist/
 *.test
 *.out
