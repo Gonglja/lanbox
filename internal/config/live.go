@@ -91,7 +91,7 @@ func (l *Live) Paths() (configFile, webConfig string) { return l.cfgPath, l.webP
 
 // Update 校验 desired（完整配置）→ 落盘覆盖 → 热更并返回影响面。
 func (l *Live) Update(desired Config) (Result, error) {
-	var res Result
+	res := Result{Changed: []string{}, Applied: []string{}, RestartRequired: []string{}}
 	desired.Origins = nil
 	if err := desired.Validate(); err != nil {
 		return res, err
@@ -151,7 +151,7 @@ func (l *Live) Update(desired Config) (Result, error) {
 
 // DropWebOverride 清除单个字段的网页覆盖（启动自愈与"恢复默认"用）。
 func (l *Live) DropWebOverride(key string) (Result, error) {
-	var res Result
+	res := Result{Changed: []string{}, Applied: []string{}, RestartRequired: []string{}}
 	prev := l.Current()
 	ov, err := loadOverrides(l.webPath)
 	if err != nil {

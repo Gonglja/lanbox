@@ -161,3 +161,31 @@ button.danger:hover { background: #3a1d21; }
   .topbar { padding: 8px 10px; }
   .who { display: none; }
 }
+
+.tabs { display: flex; gap: 8px; }
+.settings-group { margin: 0; }
+.settings-group > strong { display: block; margin-bottom: 8px; }
+.settings-row {
+  display: grid;
+  grid-template-columns: 11rem 1fr;
+  gap: 8px;
+  align-items: start;
+  margin-bottom: 8px;
+}
+.settings-input { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.settings-input input[type="text"], .settings-input input[type="number"] { min-width: 12rem; }
+.settings-input .hint { flex-basis: 100%; }
+.badges { display: inline-flex; gap: 4px; }
+.badge.origin { background: rgba(127, 127, 127, 0.16); }
+.badge.warn { background: rgba(220, 140, 0, 0.22); }
+.settings-actions { display: flex; gap: 8px; }
+#pane-users { display: grid; gap: 12px; align-content: start; }
+#pane-settings { display: grid; gap: 12px; align-content: start; }
+.mask {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55);
+  display: flex; align-items: center; justify-content: center; z-index: 50;
+}
+.mask-card { max-width: 26rem; text-align: center; }
+@media (max-width: 640px) {
+  .settings-row { grid-template-columns: 1fr; }
+}

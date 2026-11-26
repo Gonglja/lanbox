@@ -50,6 +50,20 @@ export const api = {
   setUserPassword: (name, password) =>
     request('POST', '/api/users/' + encodeURIComponent(name) + '/password', { password }),
   deleteUser: (name) => request('DELETE', '/api/users/' + encodeURIComponent(name)),
+
+  config: () => request('GET', '/api/config'),
+  saveConfig: (values, restart = false) => request('PUT', '/api/config', { values, restart }),
+  restart: () => request('POST', '/api/config/restart'),
+  healthz: async () => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 1000);
+    try {
+      const resp = await fetch('/api/healthz', { signal: ctrl.signal, cache: 'no-store' });
+      return resp.ok ? await resp.json() : null;
+    } finally {
+      clearTimeout(timer);
+    }
+  },
 };
 
 // uploadItem 用 XHR 上传以获得真实进度（fetch 没有上传进度）。
