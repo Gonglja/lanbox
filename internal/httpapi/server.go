@@ -23,6 +23,7 @@ type Options struct {
 	Log        *log.Logger
 	Live       *config.Live
 	MDNSStatus func() MDNSStatus
+	Discover   DiscoverFunc
 	StartedAt  time.Time
 	Version    string
 }
@@ -41,6 +42,12 @@ type Server struct {
 	mdnsStatus func() MDNSStatus
 	startedAt  time.Time
 	version    string
+
+	// discover 由 main 注入（内部用 internal/mdns）；结果缓存 discoverCacheTTL。
+	discover      DiscoverFunc
+	discoverMu    sync.Mutex
+	discoverCache []DiscoveredServer
+	discoverAt    time.Time
 }
 
 // New 组装路由与中间件。
@@ -64,6 +71,7 @@ func New(opts Options) *Server {
 		mux:        http.NewServeMux(),
 		live:       opts.Live,
 		mdnsStatus: opts.MDNSStatus,
+		discover:   opts.Discover,
 		startedAt:  opts.StartedAt,
 		version:    opts.Version,
 	}
@@ -96,6 +104,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/me", s.withAuth(s.handleMe))
 	s.mux.HandleFunc("GET /api/stats", s.withAuth(s.handleStats))
 	s.mux.HandleFunc("POST /api/password", s.withAuth(s.handleChangePassword))
+
+	// 连接信息与二维码（发给用户自己的手机/另一台电脑），以及局域网发现
+	s.mux.HandleFunc("GET /api/connect", s.withAuth(s.handleConnect))
+	s.mux.HandleFunc("GET /api/connect/qr.svg", s.withAuth(s.handleConnectQR))
+	s.mux.HandleFunc("GET /api/discover", s.withAuth(s.handleDiscover))
 
 	s.mux.HandleFunc("GET /api/items", s.withAuth(s.handleListItems))
 	s.mux.HandleFunc("POST /api/items", s.withAuth(s.handleCreateItem))

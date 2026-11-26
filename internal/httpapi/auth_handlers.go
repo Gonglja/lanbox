@@ -15,6 +15,16 @@ type meOutput struct {
 	IsAdmin  bool   `json:"is_admin"`
 }
 
+// loginOutput 是 /api/login 的响应。
+// 令牌只在跨域请求时下发（纯 web 客户端）：同源 Web UI 继续依赖 HttpOnly cookie，
+// 响应体与以前完全一致（token/expires_at 为 omitempty）。
+type loginOutput struct {
+	Username  string `json:"username"`
+	IsAdmin   bool   `json:"is_admin"`
+	Token     string `json:"token,omitempty"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+}
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var in loginInput
 	if !decodeJSON(w, r, &in) {
@@ -42,7 +52,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, Expires: expires,
 	})
 	s.log.Printf("info: %s 从 %s 登录成功", u.Username, ip)
-	writeJSON(w, http.StatusOK, meOutput{Username: u.Username, IsAdmin: u.IsAdmin})
+
+	out := loginOutput{Username: u.Username, IsAdmin: u.IsAdmin}
+	if crossOrigin(r) {
+		// 跨域客户端拿不到 Set-Cookie 的会话，需要自己保存并随请求携带。
+		out.Token = token
+		out.ExpiresAt = expires.UTC().Format(time.RFC3339)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {

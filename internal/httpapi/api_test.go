@@ -44,7 +44,15 @@ type env struct {
 // 夹具上限是 20，任何单条内容超过 20 个附件的测试都会拿到 400 too_many_files。
 const testMaxFilesPerItem = 20
 
+// envOption 允许个别测试给 httptest 服务器注入额外依赖（例如 Discover）。
+type envOption func(*httpapi.Options)
+
 func newEnv(t *testing.T) *env {
+	t.Helper()
+	return newEnvWith(t)
+}
+
+func newEnvWith(t *testing.T, opts ...envOption) *env {
 	t.Helper()
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")
@@ -93,10 +101,14 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatalf("初始化管理员失败: %v", err)
 	}
-	s := httpapi.New(httpapi.Options{
+	srvOpts := httpapi.Options{
 		Cfg: cfg, Store: st, Auth: am, Web: lanbox.WebFS(), Log: log.New(io.Discard, "", 0),
 		Live: live, Version: "test", StartedAt: time.Now(),
-	})
+	}
+	for _, opt := range opts {
+		opt(&srvOpts)
+	}
+	s := httpapi.New(srvOpts)
 	srv := httptest.NewTLSServer(s)
 	t.Cleanup(srv.Close)
 
@@ -489,10 +501,10 @@ func TestDownloadInlinePreview(t *testing.T) {
 
 	jpeg := []byte("\xff\xd8\xff\xe0fake-jpeg")
 	e.upload(t, "预览", map[string][]byte{
-		"照片.JPG": jpeg,
+		"照片.JPG":   jpeg,
 		"clip.mp4": []byte("fake-mp4-body"),
-		"说明.txt": []byte("hello"),
-		"图标.svg": []byte("<svg xmlns='http://www.w3.org/2000/svg'/>"),
+		"说明.txt":   []byte("hello"),
+		"图标.svg":   []byte("<svg xmlns='http://www.w3.org/2000/svg'/>"),
 	})
 
 	_, body := e.do(t, e.newJSONReq(t, http.MethodGet, "/api/items", nil))

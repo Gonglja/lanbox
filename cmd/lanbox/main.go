@@ -124,6 +124,7 @@ func run() error {
 		Log:        logger,
 		Live:       live,
 		MDNSStatus: func() httpapi.MDNSStatus { return mdnsRun.status(live.Current()) },
+		Discover:   discoverServers(mdnsRun, live),
 		StartedAt:  time.Now(),
 		Version:    version,
 	})
