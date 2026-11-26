@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"image"
 	"image/color"
 	"sync"
@@ -27,10 +28,14 @@ type tray struct {
 	openCh   chan struct{}
 	pauseCh  chan struct{}
 	uploadCh chan struct{}
+	updateCh chan struct{}
+	rollCh   chan struct{}
 	quitCh   chan struct{}
 
-	mu        sync.Mutex
-	pauseItem *systray.MenuItem
+	mu           sync.Mutex
+	pauseItem    *systray.MenuItem
+	updateItem   *systray.MenuItem
+	rollbackItem *systray.MenuItem
 }
 
 // startTray 启动托盘（Windows 上 systray.Run 会阻塞，放到独立 goroutine）。
@@ -40,6 +45,8 @@ func startTray(app *App) *tray {
 		openCh:   make(chan struct{}, 1),
 		pauseCh:  make(chan struct{}, 1),
 		uploadCh: make(chan struct{}, 1),
+		updateCh: make(chan struct{}, 1),
+		rollCh:   make(chan struct{}, 1),
 		quitCh:   make(chan struct{}, 1),
 	}
 	go systray.Run(t.onReady, func() {})
@@ -56,6 +63,10 @@ func (t *tray) onReady() {
 	t.pauseItem = systray.AddMenuItem("暂停自动上传", "暂停/恢复剪贴板自动上传")
 	t.mu.Unlock()
 	upload := systray.AddMenuItem("立即上传剪贴板", "把当前剪贴板内容上传到服务器")
+	t.mu.Lock()
+	t.updateItem = systray.AddMenuItem("检查更新", "检查 lanbox-agent 是否有新版本")
+	t.rollbackItem = systray.AddMenuItem("回滚到上一版本", "把上一次升级前的程序换回来并重启")
+	t.mu.Unlock()
 	systray.AddSeparator()
 	quit := systray.AddMenuItem("退出", "退出 lanbox 客户端")
 
@@ -75,6 +86,12 @@ func (t *tray) onReady() {
 	t.mu.Unlock()
 	forward(pauseItem, t.pauseCh)
 	forward(upload, t.uploadCh)
+	t.mu.Lock()
+	updateItem, rollbackItem := t.updateItem, t.rollbackItem
+	t.mu.Unlock()
+	forward(updateItem, t.updateCh)
+	forward(rollbackItem, t.rollCh)
+	rollbackItem.Hide()
 	forward(quit, t.quitCh)
 }
 
@@ -90,6 +107,10 @@ func (t *tray) loop() {
 			if err := t.app.UploadClipboardNow(); err != nil {
 				t.app.setLastErr(err.Error())
 			}
+		case <-t.updateCh:
+			t.app.trayUpdate()
+		case <-t.rollCh:
+			t.app.trayRollback()
 		case <-t.quitCh:
 			t.app.quit()
 			return
@@ -128,12 +149,34 @@ func (t *tray) update(st UIState) {
 
 	t.mu.Lock()
 	item := t.pauseItem
+	updateItem := t.updateItem
+	rollbackItem := t.rollbackItem
 	t.mu.Unlock()
 	if item != nil {
 		if st.Paused {
 			item.SetTitle("恢复自动上传")
 		} else {
 			item.SetTitle("暂停自动上传")
+		}
+	}
+	if updateItem != nil {
+		switch {
+		case st.UpdateBusy:
+			updateItem.SetTitle(fmt.Sprintf("正在升级 %d%%", st.UpdateProgress))
+			updateItem.Disable()
+		case st.UpdateAvailable:
+			updateItem.SetTitle("升级到 v" + st.UpdateLatest)
+			updateItem.Enable()
+		default:
+			updateItem.SetTitle("检查更新")
+			updateItem.Enable()
+		}
+	}
+	if rollbackItem != nil {
+		if st.CanRollback && !st.UpdateBusy {
+			rollbackItem.Show()
+		} else {
+			rollbackItem.Hide()
 		}
 	}
 }

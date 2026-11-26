@@ -13,15 +13,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"lanbox/internal/agent"
 	"lanbox/internal/client"
 	"lanbox/internal/mdns"
 	"lanbox/internal/session"
+	"lanbox/internal/updater"
 	"lanbox/internal/winclip"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -29,14 +32,14 @@ import (
 
 // UIState 是界面状态条与登录页需要的全部状态。
 type UIState struct {
-	Version     string `json:"version"`
-	Server      string `json:"server"`
-	Username    string `json:"username"`
-	LoggedIn    bool   `json:"logged_in"`
-	Enabled     bool   `json:"enabled"`
-	Paused      bool   `json:"paused"`
-	Listening   bool   `json:"listening"`
-	Available   bool   `json:"available"`
+	Version   string `json:"version"`
+	Server    string `json:"server"`
+	Username  string `json:"username"`
+	LoggedIn  bool   `json:"logged_in"`
+	Enabled   bool   `json:"enabled"`
+	Paused    bool   `json:"paused"`
+	Listening bool   `json:"listening"`
+	Available bool   `json:"available"`
 	// 断线重连状态：界面用它决定状态点颜色、顶部文案与提示条。
 	Connected         bool   `json:"connected"`
 	Reconnecting      bool   `json:"reconnecting"`
@@ -44,15 +47,22 @@ type UIState struct {
 	NextRetryAt       int64  `json:"next_retry_at"` // epoch 毫秒，前端自己走秒
 	ReconnectStopped  bool   `json:"reconnect_stopped"`
 	ReconnectReason   string `json:"reconnect_reason"`
-	HasPassword bool   `json:"has_password"`
-	LastErr     string `json:"last_err"`
-	LastSkip    string `json:"last_skip"`
-	Active      int    `json:"active"`
-	Queue       int    `json:"queue"`
-	LogPath     string `json:"log_path"`
-	DataDir     string `json:"data_dir"`
-	Autostart   bool   `json:"autostart"`
-	CloseTray   bool   `json:"close_to_tray"`
+	HasPassword       bool   `json:"has_password"`
+	LastErr           string `json:"last_err"`
+	LastSkip          string `json:"last_skip"`
+	Active            int    `json:"active"`
+	Queue             int    `json:"queue"`
+	LogPath           string `json:"log_path"`
+	DataDir           string `json:"data_dir"`
+	Autostart         bool   `json:"autostart"`
+	CloseTray         bool   `json:"close_to_tray"`
+	// 在线更新状态（托盘与设置页「关于」共用）。
+	UpdateAvailable bool   `json:"update_available"`
+	UpdateLatest    string `json:"update_latest"`
+	UpdateNotes     string `json:"update_notes"`
+	UpdateBusy      bool   `json:"update_busy"`
+	UpdateProgress  int    `json:"update_progress"`
+	CanRollback     bool   `json:"can_rollback"`
 }
 
 // Found 是一个 mDNS 发现结果（给界面列表用）。
@@ -153,14 +163,17 @@ type App struct {
 	// saveSession 默认写 ~/.config/lanbox/session.json；测试里替换成不落盘，
 	// 免得把开发机上的真实会话覆盖掉。
 	saveSession func(*client.Session) error
-	watcher  *winclip.Watcher
-	watching bool
-	quitting bool
-	clipCh   chan agent.Clip
-	tray     *tray
+	watcher     *winclip.Watcher
+	watching    bool
+	quitting    bool
+	clipCh      chan agent.Clip
+	tray        *tray
 
 	logPath string
 	dataDir string
+
+	// 在线更新（拿不到自身路径时为 nil）。
+	update *updater.Manager
 }
 
 // NewApp 构造绑定对象（尚未启动）。
@@ -194,6 +207,7 @@ func NewApp(version string, logger *log.Logger) *App {
 		OnState:     func(st agent.State) { a.emitState() },
 	})
 	a.mgr.SetAvailable(false)
+	a.update = newAgentUpdater(version, logger, a)
 	return a
 }
 
@@ -219,6 +233,10 @@ func (a *App) startup(ctx context.Context) {
 	a.restoreSession()
 	a.syncWatcher()
 	a.enableReconnect()
+	// 静默检查更新：启动后查一次、之后每天一次；只提示不自动升级。
+	if a.update != nil && a.settings.App.CheckUpdate {
+		a.update.Run(ctx, "daily")
+	}
 	a.emitState()
 	a.emit("records", a.mgr.History())
 	go a.pumpClipboard()
@@ -393,6 +411,15 @@ func (a *App) uiState() UIState {
 		DataDir:           a.dataDir,
 		Autostart:         a.settings.App.Autostart,
 		CloseTray:         a.settings.App.CloseToTray,
+	}
+	if a.update != nil {
+		up := a.update.State()
+		st.UpdateAvailable = up.Available
+		st.UpdateLatest = up.Latest
+		st.UpdateNotes = up.Notes
+		st.UpdateBusy = up.Updating
+		st.UpdateProgress = up.Progress
+		st.CanRollback = up.CanRollback
 	}
 	if at := a.rc.NextRetryAt(); !at.IsZero() {
 		st.NextRetryAt = at.UnixMilli()
@@ -773,4 +800,154 @@ func revealPath(path string) error {
 		path = filepath.Dir(path)
 	}
 	return exec.Command("explorer.exe", "/select,"+path).Start()
+}
+
+// ---------- 在线更新 ----------
+
+// newAgentUpdater 构造 agent 的更新管理器。
+// 更新源默认 GitHub Release；可用环境变量 LANBOX_UPDATE_URL（基地址或 latest.json）覆盖。
+func newAgentUpdater(version string, logger *log.Logger, app_ *App) *updater.Manager {
+	exe, err := os.Executable()
+	if err != nil {
+		if logger != nil {
+			logger.Printf("warn: 拿不到自身路径，在线更新已关闭: %v", err)
+		}
+		return nil
+	}
+	src := updater.SourceFromURL(os.Getenv("LANBOX_UPDATE_URL"), os.Getenv("LANBOX_UPDATE_TOKEN"))
+	up, err := updater.New(updater.Options{
+		Current: version,
+		Asset:   updater.AssetName("lanbox-agent", "windows", runtime.GOARCH),
+		Source:  func() updater.Source { return src },
+		Log:     logger,
+	})
+	if err != nil {
+		if logger != nil {
+			logger.Printf("warn: 初始化在线更新失败: %v", err)
+		}
+		return nil
+	}
+	return updater.NewManager(updater.ManagerOptions{
+		Updater: up,
+		ExePath: exe,
+		Restart: app_.restartAfterUpdate,
+		OnState: func(st updater.State) {
+			// 进度/可用版本变化都通过常规 state 事件推给界面与托盘。
+			app_.emit("update:state", st)
+			app_.emitState()
+		},
+		Log: logger,
+	})
+}
+
+// UpdateState 返回更新状态（只读缓存，不联网）。
+func (a *App) UpdateState() updater.State {
+	if a.update == nil {
+		return updater.State{Current: a.version}
+	}
+	return a.update.State()
+}
+
+// CheckUpdate 立即检查更新。
+func (a *App) CheckUpdate() (updater.State, error) {
+	if a.update == nil {
+		return a.UpdateState(), errors.New("当前环境不支持在线更新")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	return a.update.Check(ctx)
+}
+
+// ApplyUpdate 下载、校验、替换并重启（version 必须是最近一次检查到的版本）。
+func (a *App) ApplyUpdate(version string) (updater.State, error) {
+	if a.update == nil {
+		return a.UpdateState(), errors.New("当前环境不支持在线更新")
+	}
+	// 替换前先停掉剪贴板监听，避免升级过程中又上传一条内容。
+	a.stopWatching()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	return a.update.Apply(ctx, version)
+}
+
+// RollbackUpdate 把 .old 换回来并重启。
+func (a *App) RollbackUpdate() (updater.State, error) {
+	if a.update == nil {
+		return a.UpdateState(), errors.New("当前环境不支持在线更新")
+	}
+	return a.update.Rollback()
+}
+
+// stopWatching 关闭剪贴板监听（升级前调用）。
+func (a *App) stopWatching() {
+	a.mu.Lock()
+	w := a.watcher
+	a.watcher = nil
+	a.watching = false
+	a.mu.Unlock()
+	if w != nil {
+		w.Close()
+	}
+	a.emitState()
+}
+
+// restartAfterUpdate 拉起新实例（带 -wait-pid），然后退出当前进程。
+func (a *App) restartAfterUpdate() {
+	if a.ctx == nil {
+		return
+	}
+	go func() {
+		if err := relaunchAgent(); err != nil {
+			a.logf("warn: 升级后拉起新实例失败: %v", err)
+			a.setLastErr("升级后需要手动重启 lanbox-agent：" + err.Error())
+			return
+		}
+		a.logf("info: 已拉起新实例，当前进程退出")
+		a.quit()
+	}()
+}
+
+// relaunchAgent 用同一个 exe 启动新进程，并让新进程等当前 PID 退出后再抢单实例锁。
+func relaunchAgent() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	args := argsWithoutWaitPid(os.Args[1:])
+	args = append(args, "-wait-pid", strconv.Itoa(os.Getpid()))
+	cmd := exec.Command(exe, args...)
+	cmd.Dir = filepath.Dir(exe)
+	cmd.Env = os.Environ()
+	// 独立进程组：当前进程退出不会把新实例一起带走。
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP}
+	return cmd.Start()
+}
+
+// trayUpdate 处理托盘「检查更新 / 升级」：有新版就直接装（托盘点击即确认）。
+func (a *App) trayUpdate() {
+	if a.update == nil {
+		return
+	}
+	st := a.UpdateState()
+	if st.Available {
+		if _, err := a.ApplyUpdate(st.Latest); err != nil {
+			a.setLastErr("升级失败: " + err.Error())
+		}
+		return
+	}
+	go func() {
+		if _, err := a.CheckUpdate(); err != nil {
+			a.setLastErr("检查更新失败: " + err.Error())
+		}
+	}()
+}
+
+// trayRollback 处理托盘「回滚到上一版本」。
+func (a *App) trayRollback() {
+	if a.update == nil {
+		return
+	}
+	if _, err := a.RollbackUpdate(); err != nil {
+		a.setLastErr("回滚失败: " + err.Error())
+	}
 }

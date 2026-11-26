@@ -481,14 +481,7 @@ func buildUpdater(version string, restart func(), logger *log.Logger, source fun
 
 // updateSource 把配置里的 update.url 解释成 github 模式或清单模式。
 func updateSource(c config.Update) updater.Source {
-	src := updater.Source{Token: c.Token}
-	u := strings.TrimSpace(c.URL)
-	if strings.HasSuffix(strings.ToLower(u), ".json") {
-		src.Manifest = u
-	} else {
-		src.BaseURL = u
-	}
-	return src
+	return updater.SourceFromURL(c.URL, c.Token)
 }
 
 // startUpdateChecks 按配置启动后台检查（先停掉旧的）。

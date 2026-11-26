@@ -326,3 +326,12 @@ func transport() *http.Transport {
 	tr.Proxy = http.ProxyFromEnvironment
 	return tr
 }
+
+// SourceFromURL 把「基地址或清单地址」解释成 Source：以 .json 结尾视为清单。
+func SourceFromURL(u, token string) Source {
+	u = strings.TrimSpace(u)
+	if strings.HasSuffix(strings.ToLower(u), ".json") {
+		return Source{Manifest: u, Token: token}
+	}
+	return Source{BaseURL: u, Token: token}
+}
