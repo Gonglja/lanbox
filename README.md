@@ -156,6 +156,46 @@ Bearer 令牌通道：
 - 退出登录即作废会话；令牌不会写进访问日志（只记路径，不记查询串），`Referrer-Policy: no-referrer` 已在全局生效
 - 想收紧的话，可以在反向代理上对不在白名单里的 `Origin` 直接返回 403（同源网页不受影响）
 
+## Android App（服务端 + 客户端一体）
+
+一个 APK 里既有服务端也有客户端：手机既当共享盘，也能自己收发。**打开 App 首页就是 lanbox 页面**，
+控制台收在右下角齿轮里。
+
+- 打开 App 自动拉起服务（前台 Service + 常驻通知），首页 WebView 直连 `https://127.0.0.1:8443`
+- WebView 只对回环地址放行，且必须与本机证书指纹一致；登录用一次性回环令牌免密换会话，用户全程不见密码
+- 其它设备（PC / 平板 / 另一台手机）用浏览器访问 `https://<手机IP>:8443`，首次需信任自签证书
+- 右下角齿轮进「设置」：服务开关、访问地址（可复制）、开机自启、电池优化白名单、运行日志、清空数据
+
+**构建**（前置：JDK 17–21、Android SDK platform 35、NDK 27；不需要 gomobile）
+
+```bash
+make android-keystore   # 只需一次：生成 android/lanbox-release.jks + keystore.properties（务必备份）
+make android            # 编 liblanbox.so → 打 release APK → dist/lanbox-android.apk
+make android-env        # 只检查前置，缺什么报什么
+```
+
+`make android` 会先跑 `android-env`，再用 NDK 的 clang 编 `mobile/jni`（`-buildmode=c-shared`），
+最后交给 Gradle（Gradle 8.13 + AGP 8.7.3 + Kotlin 2.0.21，`minSdk 26` / `targetSdk 35`，仅 `arm64-v8a`）。
+没有 `android/keystore.properties` 时退回 debug 签名，产物叫 `lanbox-android-debug.apk`（**无法覆盖安装正式版**）。
+
+**安装**：`adb install dist/lanbox-android.apk`；小米等 ROM 需在开发者选项里打开「USB 安装」。
+
+| 项 | 取值 | 说明 |
+|---|---|---|
+| 端口 | **固定 8443** | 443 需要 root，普通应用绑不上；所以手机端不会用 443 |
+| 数据目录 | `Android/data/top.glj0.lanbox/files/lanbox` | 应用私有，卸载即清；网页可改的配置写在这里 |
+| 固定字段 | `listen` / `data_dir` / `tls.*` / `min_free_disk_mb=512` / `max_file_size_mb=512` | 网页改这些会返回「字段由 App 固定」 |
+| mDNS 名 | `lanbox-<androidId 后 4 位>` | 同一局域网多台手机不撞名 |
+| 保活 | 前台 Service（`dataSync`）+ WakeLock + WifiLock + MulticastLock | 息屏后仍可被访问；建议加电池白名单 |
+| 下载 | WebView 里的附件由 App 自己下到 `Android/data/.../files/Download` | 系统 DownloadManager 不认自签证书 |
+
+已知限制：
+
+- 仅 `arm64-v8a`（2016 年后的手机基本都是）
+- 不做自动清理：靠 `min_free_disk_mb=512` + `max_file_size_mb=512` 两道限制兜底
+- 开机自启在 Android 15+ 可能被系统拒绝（`dataSync` 类型的后台启动限制）；被拒时打开 App 会自动恢复服务
+- 手机自签证书，其它设备首次访问需要手动信任；想省事可以在手机上换用受信任证书（把 pem 放进数据目录并改配置）
+
 ## 交叉编译
 
 ```bash
@@ -173,6 +213,7 @@ make dist     # 产出 dist/ 下 14 个静态二进制（Linux + Windows，服�
 | `dist/lanbox-windows-arm64.exe` | Windows on ARM |
 | `dist/lanbox-agent-windows-arm64.exe` | Windows 客户端（ARM64） |
 | `dist/lanbox-client.html` | 纯 web 客户端（单文件，任意浏览器打开） |
+| `dist/lanbox-android.apk` | Android App（服务端 + 客户端一体，仅 arm64，见上节） |
 | `dist/LICENSE` | 许可证正文（MIT）；分发产物时请一并带上 |
 | `dist/SHA256SUMS` | 上面全部产物的校验和 |
 
@@ -187,6 +228,8 @@ make dist     # 产出 dist/ 下 14 个静态二进制（Linux + Windows，服�
 | `make build` | 只编本机架构到 `./lanbox` 与 `./lanbox-cli`（Windows 上自动带 `.exe`） |
 | `make agent` | 只编 Windows 客户端 `./lanbox-agent.exe` |
 | `make client` | 只打包纯 web 客户端 `dist/lanbox-client.html` |
+| `make android` | 打 Android APK 到 `dist/lanbox-android.apk` |
+| `make android-keystore` | 生成侧载签名（只需一次） |
 | `make windows` | 只编 Windows 的 6 个产物（amd64/arm64 × 服务端/CLI/客户端） |
 | `make test` | 跑全部测试 |
 | `make check` | 提交前自检：gofmt + go vet + test |

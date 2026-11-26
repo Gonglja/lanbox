@@ -996,3 +996,34 @@ git add README.md && git commit -m "docs(android): README 增补 Android App 章
 - `make build`、`make client`、`make dist` 仍可用（桌面目标零回归）
 - `make android` 产出可安装的 `dist/lanbox-android.apk`
 - Task 12 的 8 项真机验收全部通过或明确记录降级行为
+
+---
+
+## 实现后的结构变更（与初稿不同，已按用户反馈调整）
+
+- **首页直接是 lanbox 页面**：`MainActivity` 变成 WebView 宿主（指纹固定 + 回环免密 + 401 自动重新引导），
+  打开 App 即拉起服务；原控制面板拆成 `SettingsActivity`，由右下角齿轮进入
+- **端口固定 8443**：443 在 Android 上需要 root，普通应用绑不上；App 侧强制覆盖 `listen`
+- **不用 gomobile**：2026 版 gomobile 要求 `go.mod` 增加 tool 依赖并把 go 指令抬到 1.26，
+  改为 `-buildmode=c-shared` + 手写 JNI（`mobile/jni`），`go.mod` 零改动
+- **Android 拿不到网卡**：SELinux 禁 netlink，`net.Interfaces()` 返回空。
+  由 Kotlin 读 WiFi IPv4 传给 Go（`Configure(..., lanIP)` → `app.Options.LanIPs`
+  → 证书 SAN / `Info().Addrs` / `/api/connect` 的 `interface` 条目）
+- **edge-to-edge**：`targetSdk 35` 在 Android 15+ 强制 edge-to-edge，页面顶栏会被状态栏压住，
+  两个 Activity 都要读 window insets 设 padding
+- **附件下载**：系统 DownloadManager 不认自签证书，改用只信任本机证书的 `SSLContext` 自己下载
+
+## 真机验收记录（Xiaomi 13 / 2211133C / Android 16，2026-11-27）
+
+| # | 项 | 结果 |
+|---|---|---|
+| 1 | 首次安装 → 自动开服务 → 通知显示 `https://10.0.0.122:8443` → 点开即进主界面（admin 已登录） | ✅ |
+| 2 | PC 用 `lanbox-cli` 登录 / 发文本 / 发文件 / 下载还原 | ✅（`-insecure` 跳过自签校验） |
+| 3 | 状态页「手机扫码连接」地址下拉含 3 条：mDNS / `https://10.0.0.122:8443 · 本机地址` / 回环 | ✅ |
+| 4 | 息屏（`mWakefulness=Dozing`）70s 后 PC 仍可访问；Service `isForeground=true` | ✅（用 70s 代替 10 分钟） |
+| 5 | `am force-stop` 后服务消失；重开 App 自动恢复（`uptime_s=7`） | ✅ |
+| 6 | 勾选开机自启 → `adb reboot` → 60s 内自动起来（`uptime_s=5`） | ✅（Android 16 未拦 `dataSync`） |
+| 7 | 网页改 `max_files_per_item=33` → 200 applied；改 `listen` → 400「字段由 App 固定：listen」；`/api/config/restart` → 501 | ✅ |
+| 8 | 8443 被占导致启动失败 | ⚠️ 未在真机模拟（无 root 无法占用端口）；由 `internal/app` 单测 + `Start()` 返回错误 + 通知变红/开关回弹逻辑覆盖 |
+
+未覆盖项：第二台手机扫码（手头只有一台设备）、`armeabi-v7a`、横屏。
