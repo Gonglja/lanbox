@@ -61,6 +61,11 @@ func safeJoin(base, rel string) (string, error) {
 	if filepath.VolumeName(rel) != "" {
 		return "", fmt.Errorf("服务端返回的路径不安全: %q", rel)
 	}
+	// 盘符路径（C:xxx）只在 Windows 上被 VolumeName 识别；服务端不可能返回它，
+	// 在 Linux/macOS 上也得拦下（否则会被当成合法文件名写进目标目录）。
+	if len(rel) >= 2 && rel[1] == ':' && ((rel[0] >= 'a' && rel[0] <= 'z') || (rel[0] >= 'A' && rel[0] <= 'Z')) {
+		return "", fmt.Errorf("服务端返回的路径不安全: %q", rel)
+	}
 	clean := filepath.Clean(filepath.FromSlash(rel))
 	if clean == "." || filepath.IsAbs(clean) || clean == ".." ||
 		strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
