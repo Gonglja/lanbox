@@ -220,3 +220,18 @@ func TestSetText(t *testing.T) {
 		t.Fatalf("内容不存在应报 ErrNotFound，得到 %v", err)
 	}
 }
+
+func TestSetLimitsTakesEffectImmediately(t *testing.T) {
+	s := newStore(t, Options{MaxTextBytes: 65536, MaxFiles: 500, MaxItemBytes: 1 << 30})
+	if _, err := s.Create(CreateInput{Text: "0123456789"}); err != nil {
+		t.Fatalf("默认限额下应成功: %v", err)
+	}
+
+	s.SetLimits(Options{MaxTextBytes: 5, MaxFileBytes: 1 << 20, MinFreeBytes: 0, MaxFiles: 2, MaxItemBytes: 1 << 20})
+	if _, err := s.Create(CreateInput{Text: "0123456789"}); !errors.Is(err, ErrTextTooLong) {
+		t.Fatalf("新上限应立即生效，得到 %v", err)
+	}
+	if s.MaxFiles() != 2 {
+		t.Fatalf("MaxFiles 应返回新值，得到 %d", s.MaxFiles())
+	}
+}

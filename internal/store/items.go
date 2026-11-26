@@ -31,7 +31,7 @@ type ListResult struct {
 // Create 新建一条内容（可无文本，由调用方决定是否合法）。
 func (s *Store) Create(in CreateInput) (*Item, error) {
 	text := strings.TrimSpace(in.Text)
-	if s.opts.MaxTextBytes > 0 && len(text) > s.opts.MaxTextBytes {
+	if s.lims().maxTextBytes > 0 && len(text) > s.lims().maxTextBytes {
 		return nil, ErrTextTooLong
 	}
 	it := &Item{
@@ -100,7 +100,7 @@ func (s *Store) List(q ListQuery) (ListResult, error) {
 // SetText 覆盖内容文本（用于先收附件、后拿到文本的上传顺序）。
 func (s *Store) SetText(id, text string) (*Item, error) {
 	text = strings.TrimSpace(text)
-	if s.opts.MaxTextBytes > 0 && len(text) > s.opts.MaxTextBytes {
+	if s.lims().maxTextBytes > 0 && len(text) > s.lims().maxTextBytes {
 		return nil, ErrTextTooLong
 	}
 	s.mu.Lock()

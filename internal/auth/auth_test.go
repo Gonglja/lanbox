@@ -214,3 +214,41 @@ func TestSetPasswordAndVerify(t *testing.T) {
 		t.Fatalf("不存在用户应报 ErrUserNotFound，得到 %v", err)
 	}
 }
+
+func TestSetSessionTTL(t *testing.T) {
+	dir := t.TempDir()
+	m, err := Open(filepath.Join(dir, "users.json"), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := m.BootstrapAdmin(); err != nil {
+		t.Fatal(err)
+	}
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	m.now = func() time.Time { return base }
+	tok, expires, err := m.NewSession("admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := expires.Sub(base); got != time.Hour {
+		t.Fatalf("默认 TTL 应为 1h，得到 %v", got)
+	}
+
+	m.SetSessionTTL(10 * time.Minute)
+	later := base.Add(2 * time.Hour)
+	m.now = func() time.Time { return later }
+	if _, ok := m.Lookup(tok); ok {
+		t.Fatal("两小时后旧会话应已过期")
+	}
+	tok2, expires2, err := m.NewSession("admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := expires2.Sub(later); got != 10*time.Minute {
+		t.Fatalf("新 TTL 应为 10m，得到 %v", got)
+	}
+	if _, ok := m.Lookup(tok2); !ok {
+		t.Fatal("新会话应有效")
+	}
+}

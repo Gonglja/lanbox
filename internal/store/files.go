@@ -29,8 +29,8 @@ func (s *Store) MaxFiles() int { return s.maxFiles() }
 
 // maxFiles 返回生效的附件数量上限。
 func (s *Store) maxFiles() int {
-	if s.opts.MaxFiles > 0 {
-		return s.opts.MaxFiles
+	if s.lims().maxFiles > 0 {
+		return s.lims().maxFiles
 	}
 	return DefaultMaxFiles
 }
@@ -40,8 +40,8 @@ func (s *Store) MaxItemBytes() int64 { return s.maxItemBytes() }
 
 // maxItemBytes 返回生效的单条总大小上限；0 表示未配置时回落到默认值。
 func (s *Store) maxItemBytes() int64 {
-	if s.opts.MaxItemBytes > 0 {
-		return s.opts.MaxItemBytes
+	if s.lims().maxItemBytes > 0 {
+		return s.lims().maxItemBytes
 	}
 	return DefaultMaxItemBytes
 }
@@ -115,12 +115,12 @@ func (s *Store) AddFile(itemID, relPath string, declaredSize int64, r io.Reader)
 	}
 	base := path.Base(finalPath)
 
-	if s.opts.FreeSpace != nil {
-		free, err := s.opts.FreeSpace(s.itemsRoot)
+	if s.freeSpace != nil {
+		free, err := s.freeSpace(s.itemsRoot)
 		if err != nil {
 			return nil, fmt.Errorf("检查磁盘空间失败: %w", err)
 		}
-		need := s.opts.MinFreeBytes
+		need := s.lims().minFreeBytes
 		if declaredSize > 0 {
 			need += declaredSize
 		}
@@ -139,7 +139,7 @@ func (s *Store) AddFile(itemID, relPath string, declaredSize int64, r io.Reader)
 	hasher := sha256.New()
 
 	// 读取上限取单文件上限与单条剩余额度的较小值，超限时立即中止。
-	limit := s.opts.MaxFileBytes
+	limit := s.lims().maxFileBytes
 	if limit <= 0 || remaining < limit {
 		limit = remaining
 	}
@@ -158,7 +158,7 @@ func (s *Store) AddFile(itemID, relPath string, declaredSize int64, r io.Reader)
 		os.Remove(diskPath)
 		return nil, fmt.Errorf("保存附件失败: %w", closeErr)
 	}
-	if s.opts.MaxFileBytes > 0 && n > s.opts.MaxFileBytes {
+	if s.lims().maxFileBytes > 0 && n > s.lims().maxFileBytes {
 		os.Remove(diskPath)
 		return nil, ErrTooLarge
 	}

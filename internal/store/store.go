@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -101,10 +102,30 @@ type Options struct {
 	FreeSpace    func(path string) (int64, error)
 }
 
+// limits 是可在运行时热更的上传限额快照。
+type limits struct {
+	maxFileBytes int64
+	minFreeBytes int64
+	maxTextBytes int
+	maxFiles     int
+	maxItemBytes int64
+}
+
+func limitsFrom(o Options) *limits {
+	return &limits{
+		maxFileBytes: o.MaxFileBytes,
+		minFreeBytes: o.MinFreeBytes,
+		maxTextBytes: o.MaxTextBytes,
+		maxFiles:     o.MaxFiles,
+		maxItemBytes: o.MaxItemBytes,
+	}
+}
+
 // Store 是内容存储。itemsRoot 是 items 目录（data/items）。
 type Store struct {
 	itemsRoot string
-	opts      Options
+	freeSpace func(path string) (int64, error)
+	lim       atomic.Pointer[limits]
 	mu        sync.RWMutex
 	index     map[string]*Item
 }
@@ -117,7 +138,8 @@ func Open(itemsRoot string, opts Options) (*Store, error) {
 	if err := os.MkdirAll(itemsRoot, 0o750); err != nil {
 		return nil, fmt.Errorf("创建数据目录 %s 失败: %w", itemsRoot, err)
 	}
-	s := &Store{itemsRoot: itemsRoot, opts: opts, index: map[string]*Item{}}
+	s := &Store{itemsRoot: itemsRoot, freeSpace: opts.FreeSpace, index: map[string]*Item{}}
+	s.lim.Store(limitsFrom(opts))
 	entries, err := os.ReadDir(itemsRoot)
 	if err != nil {
 		return nil, fmt.Errorf("读取数据目录失败: %w", err)
@@ -142,6 +164,13 @@ func Open(itemsRoot string, opts Options) (*Store, error) {
 	}
 	return s, nil
 }
+
+// lims 返回当前限额快照（无锁读）。
+func (s *Store) lims() *limits { return s.lim.Load() }
+
+// SetLimits 立即替换上传限额（热更），不影响已存在内容。
+// FreeSpace 仍由 Open 时确定，热更不改变它。
+func (s *Store) SetLimits(o Options) { s.lim.Store(limitsFrom(o)) }
 
 func (s *Store) itemDir(id string) string { return filepath.Join(s.itemsRoot, id) }
 
