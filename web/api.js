@@ -57,7 +57,8 @@ export function uploadItem({ text, files, onProgress }) {
   return new Promise((resolve, reject) => {
     const fd = new FormData();
     if (text) fd.append('text', text);
-    for (const f of files) fd.append('files', f, f.name);
+    // Go 的 Part.FileName() 会丢弃目录信息，相对路径只能放在字段名里。
+    for (const f of files) fd.append('files:' + (f.relPath || f.name), f, f.name);
 
     const xhr = new XMLHttpRequest();
     xhr.open('POST', '/api/items');

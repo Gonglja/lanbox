@@ -136,7 +136,7 @@ function refreshPending() {
   const nodes = state.pending.map((f, idx) => {
     const li = document.createElement('li');
     const name = document.createElement('span');
-    name.textContent = f.name;
+    name.textContent = f.relPath || f.name;
     const size = document.createElement('span');
     size.className = 'fmeta';
     size.textContent = fmtBytes(f.size);
@@ -154,9 +154,13 @@ function refreshPending() {
   });
   list.replaceChildren(...nodes);
   const total = state.pending.reduce((n, f) => n + f.size, 0);
-  $('limit-hint').textContent = state.pending.length
+  let hint = state.pending.length
     ? `待上传 ${state.pending.length} 个文件，共 ${fmtBytes(total)}`
     : '';
+  // 与服务端默认单条附件数上限（500）对齐的提前提示，真实上限以服务端返回为准。
+  // 放这里而不是 addFiles 之前，否则会在刷新列表时被覆盖掉。
+  if (state.pending.length > 500) hint += '，超过单条默认上限 500 个，可能被服务端拒绝';
+  $('limit-hint').textContent = hint;
 }
 
 function addFiles(files) {
@@ -275,16 +279,30 @@ function bind() {
     ev.target.value = '';
   });
 
+  $('composer-dir').addEventListener('change', (ev) => {
+    const files = Array.from(ev.target.files || []).map((f) => {
+      f.relPath = f.webkitRelativePath || f.name;
+      return f;
+    });
+    if (files.length) addFiles(files);
+    ev.target.value = '';
+  });
+
   const composer = $('composer');
   composer.addEventListener('dragover', (ev) => {
     ev.preventDefault();
     composer.classList.add('drag');
   });
   composer.addEventListener('dragleave', () => composer.classList.remove('drag'));
-  composer.addEventListener('drop', (ev) => {
+  composer.addEventListener('drop', async (ev) => {
     ev.preventDefault();
     composer.classList.remove('drag');
-    if (ev.dataTransfer && ev.dataTransfer.files.length) addFiles(ev.dataTransfer.files);
+    try {
+      const files = await collectDroppedFiles(ev.dataTransfer);
+      if (files.length) addFiles(files);
+    } catch (err) {
+      $('limit-hint').textContent = '读取拖入的文件失败：' + (err.message || err);
+    }
   });
 
   document.addEventListener('paste', (ev) => {
@@ -316,6 +334,47 @@ async function setFilter(f) {
   $('filter-all').classList.toggle('active', f === 'all');
   $('filter-todo').classList.toggle('active', f === 'todo');
   await loadFirstPage();
+}
+
+// collectDroppedFiles 把拖入的 DataTransfer 展开成带 relPath 的 File 列表。
+// 目录递归用 webkitGetAsEntry；不支持时退回 dataTransfer.files。
+async function collectDroppedFiles(dataTransfer) {
+  const out = [];
+  const walk = async (entry, prefix) => {
+    if (entry.isFile) {
+      const file = await new Promise((res, rej) => entry.file(res, rej));
+      file.relPath = prefix + entry.name;
+      out.push(file);
+      return;
+    }
+    if (!entry.isDirectory) return;
+    const reader = entry.createReader();
+    for (;;) {
+      const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+      if (!batch.length) break;
+      for (const child of batch) await walk(child, prefix + entry.name + '/');
+    }
+  };
+  const items = Array.from(dataTransfer.items || []);
+  for (const item of items) {
+    const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+    if (entry) {
+      await walk(entry, '');
+      continue;
+    }
+    const file = item.getAsFile();
+    if (file) {
+      file.relPath = file.name;
+      out.push(file);
+    }
+  }
+  if (!items.length) {
+    for (const file of Array.from(dataTransfer.files || [])) {
+      file.relPath = file.webkitRelativePath || file.name;
+      out.push(file);
+    }
+  }
+  return out;
 }
 
 // ---------- 启动 ----------
