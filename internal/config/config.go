@@ -125,7 +125,7 @@ func loadBase(path string) (Config, map[string]string, error) {
 	return c, origins, nil
 }
 
-// Load 读取 path（不存在则仅用默认值），再应用环境变量并校验。
+// Load 读取 path（不存在则仅用默认值），再应用环境变量、网页覆盖并校验。
 func Load(path string) (Config, error) {
 	c, origins, err := loadBase(path)
 	if err != nil {
@@ -134,6 +134,11 @@ func Load(path string) (Config, error) {
 	if err := applyEnv(&c, origins); err != nil {
 		return c, err
 	}
+	ov, err := loadOverrides(WebConfigPath(c))
+	if err != nil {
+		return c, err
+	}
+	ov.apply(&c, origins)
 	c.Origins = origins
 	if err := c.Validate(); err != nil {
 		return c, err
