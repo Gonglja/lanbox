@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"sync"
+	"time"
 
 	"lanbox/internal/auth"
 	"lanbox/internal/config"
@@ -14,22 +16,31 @@ import (
 
 // Options 是构建 Server 所需的依赖。
 type Options struct {
-	Cfg   config.Config
-	Store *store.Store
-	Auth  *auth.Manager
-	Web   fs.FS
-	Log   *log.Logger
+	Cfg        config.Config
+	Store      *store.Store
+	Auth       *auth.Manager
+	Web        fs.FS
+	Log        *log.Logger
+	Live       *config.Live
+	MDNSStatus func() MDNSStatus
+	StartedAt  time.Time
+	Version    string
 }
 
 // Server 是 lanbox 的 HTTP 处理入口。
 type Server struct {
-	cfg   config.Config
-	store *store.Store
-	auth  *auth.Manager
-	hub   *Hub
-	web   fs.FS
-	log   *log.Logger
-	mux   *http.ServeMux
+	cfgMu      sync.RWMutex
+	cfg        config.Config
+	store      *store.Store
+	auth       *auth.Manager
+	hub        *Hub
+	web        fs.FS
+	log        *log.Logger
+	mux        *http.ServeMux
+	live       *config.Live
+	mdnsStatus func() MDNSStatus
+	startedAt  time.Time
+	version    string
 }
 
 // New 组装路由与中间件。
@@ -37,20 +48,49 @@ func New(opts Options) *Server {
 	if opts.Log == nil {
 		opts.Log = log.Default()
 	}
+	if opts.StartedAt.IsZero() {
+		opts.StartedAt = time.Now()
+	}
+	if opts.Version == "" {
+		opts.Version = "dev"
+	}
 	s := &Server{
-		cfg:   opts.Cfg,
-		store: opts.Store,
-		auth:  opts.Auth,
-		hub:   NewHub(),
-		web:   opts.Web,
-		log:   opts.Log,
-		mux:   http.NewServeMux(),
+		cfg:        opts.Cfg,
+		store:      opts.Store,
+		auth:       opts.Auth,
+		hub:        NewHub(),
+		web:        opts.Web,
+		log:        opts.Log,
+		mux:        http.NewServeMux(),
+		live:       opts.Live,
+		mdnsStatus: opts.MDNSStatus,
+		startedAt:  opts.StartedAt,
+		version:    opts.Version,
 	}
 	s.routes()
 	return s
 }
 
+// SetConfig 替换当前配置快照（热更后调用）。
+func (s *Server) SetConfig(c config.Config) {
+	s.cfgMu.Lock()
+	s.cfg = c
+	s.cfgMu.Unlock()
+}
+
+// current 返回当前配置快照。
+func (s *Server) current() config.Config {
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+	return s.cfg
+}
+
 func (s *Server) routes() {
+	s.mux.HandleFunc("GET /api/healthz", s.handleHealthz)
+	s.mux.HandleFunc("GET /api/config", s.withAdmin(s.handleGetConfig))
+	s.mux.HandleFunc("PUT /api/config", s.withAdmin(s.handlePutConfig))
+	s.mux.HandleFunc("POST /api/config/restart", s.withAdmin(s.handleRestart))
+
 	s.mux.HandleFunc("POST /api/login", s.handleLogin)
 	s.mux.HandleFunc("POST /api/logout", s.withAuth(s.handleLogout))
 	s.mux.HandleFunc("GET /api/me", s.withAuth(s.handleMe))

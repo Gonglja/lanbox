@@ -80,6 +80,10 @@ func (l *logWriter) Flush() {
 
 func (s *Server) accessLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		start := time.Now()
 		lw := &logWriter{ResponseWriter: w}
 		next.ServeHTTP(lw, r)
@@ -138,7 +142,7 @@ func (s *Server) withAuth(h http.HandlerFunc) http.HandlerFunc {
 		http.SetCookie(w, &http.Cookie{
 			Name: sessionCookie, Value: c.Value, Path: "/",
 			HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
-			Expires: time.Now().Add(s.cfg.SessionTTL()),
+			Expires: time.Now().Add(s.current().SessionTTL()),
 		})
 		ctx := context.WithValue(r.Context(), ctxUser, u)
 		ctx = context.WithValue(ctx, ctxToken, c.Value)

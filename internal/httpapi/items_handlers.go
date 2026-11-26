@@ -67,17 +67,18 @@ func (s *Server) handleCreateItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if part.FormName() == "text" {
-			raw, err := io.ReadAll(io.LimitReader(part, int64(s.cfg.MaxTextBytes)+1))
+			maxTextBytes := s.current().MaxTextBytes
+			raw, err := io.ReadAll(io.LimitReader(part, int64(maxTextBytes)+1))
 			part.Close()
 			if err != nil {
 				cleanup()
 				writeError(w, http.StatusBadRequest, "bad_request", "读取文本失败")
 				return
 			}
-			if len(raw) > s.cfg.MaxTextBytes {
+			if len(raw) > maxTextBytes {
 				cleanup()
 				writeError(w, http.StatusBadRequest, "text_too_long",
-					"文本超过 "+strconv.Itoa(s.cfg.MaxTextBytes)+" 字节上限")
+					"文本超过 "+strconv.Itoa(maxTextBytes)+" 字节上限")
 				return
 			}
 			text = string(raw)

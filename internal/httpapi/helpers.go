@@ -47,10 +47,10 @@ func (s *Server) writeStoreErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "file_not_found", "文件不存在")
 	case errors.Is(err, store.ErrTooLarge):
 		writeError(w, http.StatusRequestEntityTooLarge, "file_too_large",
-			fmt.Sprintf("文件超过 %dMB 上限", s.cfg.MaxFileSizeMB))
+			fmt.Sprintf("文件超过 %dMB 上限", s.current().MaxFileSizeMB))
 	case errors.Is(err, store.ErrNoSpace):
 		writeError(w, http.StatusInsufficientStorage, "no_space",
-			fmt.Sprintf("磁盘空间不足，需保留至少 %dMB 空闲", s.cfg.MinFreeDiskMB))
+			fmt.Sprintf("磁盘空间不足，需保留至少 %dMB 空闲", s.current().MinFreeDiskMB))
 	case errors.Is(err, store.ErrTooManyFiles):
 		writeError(w, http.StatusBadRequest, "too_many_files",
 			fmt.Sprintf("附件数量不能超过 %d 个", s.store.MaxFiles()))
@@ -61,7 +61,7 @@ func (s *Server) writeStoreErr(w http.ResponseWriter, err error) {
 			fmt.Sprintf("单条内容超过 %dMB 上限", s.store.MaxItemBytes()>>20))
 	case errors.Is(err, store.ErrTextTooLong):
 		writeError(w, http.StatusBadRequest, "text_too_long",
-			fmt.Sprintf("文本超过 %d 字节上限", s.cfg.MaxTextBytes))
+			fmt.Sprintf("文本超过 %d 字节上限", s.current().MaxTextBytes))
 	default:
 		s.log.Printf("error: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
