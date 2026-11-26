@@ -101,14 +101,17 @@ func uploadPath(field, filename string) (path string, isFile bool) {
 }
 
 // attachmentHeader 构造同时兼容老浏览器与 UTF-8 文件名的 Content-Disposition。
-func attachmentHeader(name string) string {
+func attachmentHeader(name string) string { return dispositionHeader("attachment", name) }
+
+// dispositionHeader 按 kind（attachment / inline）生成 Content-Disposition。
+func dispositionHeader(kind, name string) string {
 	ascii := strings.Map(func(r rune) rune {
 		if r < 0x20 || r > 0x7e || r == '"' || r == '\\' {
 			return '_'
 		}
 		return r
 	}, name)
-	return fmt.Sprintf("attachment; filename=%q; filename*=UTF-8''%s", ascii, rfc5987(name))
+	return fmt.Sprintf("%s; filename=%q; filename*=UTF-8''%s", kind, ascii, rfc5987(name))
 }
 
 // rfc5987 按 RFC 5987 对文件名做百分号编码。

@@ -17,7 +17,7 @@
 |---|---|---|
 | 单个静态二进制，`go build` 不依赖 Node | README、`embed.go`、`Makefile` | 前端产物必须提交进仓库，`//go:embed all:web` 保持不变 |
 | 零第三方 Go 依赖 | `go.mod`（仅标准库） | Go 侧只加静态资源缓存头和一个测试，不引入库 |
-| 部署环境离线 | 内网小主机 | 运行时不得请求 CDN、不得有外链字体 |
+| 部署环境离线 | 小主机 | 运行时不得请求 CDN、不得有外链字体 |
 | `Content-Security-Policy: default-src 'self'` | `internal/httpapi/middleware.go` | **禁止内联脚本、禁止 `unsafe-eval`、禁止 `data:` 资源** |
 | 附件下载强制 `attachment`、`nosniff` | 设计文档第 8 节 | 保持不变 |
 

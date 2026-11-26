@@ -113,6 +113,9 @@ async function renderUsers() {
 
 function switchTab(name) {
   const users = name === 'users';
+  // 整页切换时回到顶部，避免从长篇设置切回用户列表还停在半路
+  const body = $('admin-drawer').querySelector('.drawer-body');
+  if (body) body.scrollTop = 0;
   $('tab-users').classList.toggle('is-active', users);
   $('tab-users').setAttribute('aria-selected', String(users));
   $('tab-settings').classList.toggle('is-active', !users);
@@ -132,15 +135,23 @@ function openAdmin(user) {
   if (user) currentUser = user;
   showAdminError('');
   $('admin-drawer').hidden = false;
-  $('drawer-scrim').hidden = false;
+  document.body.classList.add('admin-open');
+  const body = $('admin-drawer').querySelector('.drawer-body');
+  if (body) body.scrollTop = 0;
   switchTab('users');
   renderUsers();
   $('btn-close-admin').focus();
 }
 
+function focusAccountButton() {
+  // 管理入口现在在账号菜单里，关闭管理页后把焦点还给账号行
+  const el = $('btn-account') || $('btn-admin');
+  if (el) el.focus();
+}
+
 export function closeAdminDrawer() {
   $('admin-drawer').hidden = true;
-  $('drawer-scrim').hidden = true;
+  document.body.classList.remove('admin-open');
 }
 
 export function initAdmin(getUser) {
@@ -148,8 +159,10 @@ export function initAdmin(getUser) {
   $('btn-admin').addEventListener('click', () => {
     openAdmin((userSource && userSource()) || null);
   });
-  $('btn-close-admin').addEventListener('click', closeAdminDrawer);
-  $('drawer-scrim').addEventListener('click', closeAdminDrawer);
+  $('btn-close-admin').addEventListener('click', () => {
+    closeAdminDrawer();
+    focusAccountButton();
+  });
   $('tab-users').addEventListener('click', () => switchTab('users'));
   $('tab-settings').addEventListener('click', () => switchTab('settings'));
 
@@ -169,12 +182,13 @@ export function initAdmin(getUser) {
   });
 
   document.addEventListener('keydown', (ev) => {
+    if ($('admin-drawer').hidden) return;
+    // 页面内弹出的确认框 / 密码框 / 重启遮罩优先，不要在它们下面收掉管理页
+    if (!$('modal-root').hidden || !$('restart-mask').hidden) return;
     if (ev.key !== 'Escape') return;
-    if (!$('admin-drawer').hidden) {
-      ev.preventDefault();
-      closeAdminDrawer();
-      $('btn-admin').focus();
-    }
+    ev.preventDefault();
+    closeAdminDrawer();
+    focusAccountButton();
   });
 
   initSettings();

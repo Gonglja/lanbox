@@ -483,6 +483,116 @@ func TestDownloadStreamsAndCounts(t *testing.T) {
 	}
 }
 
+func TestDownloadInlinePreview(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+
+	jpeg := []byte("\xff\xd8\xff\xe0fake-jpeg")
+	e.upload(t, "预览", map[string][]byte{
+		"照片.JPG": jpeg,
+		"clip.mp4": []byte("fake-mp4-body"),
+		"说明.txt": []byte("hello"),
+		"图标.svg": []byte("<svg xmlns='http://www.w3.org/2000/svg'/>"),
+	})
+
+	_, body := e.do(t, e.newJSONReq(t, http.MethodGet, "/api/items", nil))
+	var list struct {
+		Items []store.Item `json:"items"`
+	}
+	if err := json.Unmarshal(body, &list); err != nil || len(list.Items) != 1 {
+		t.Fatalf("解析列表失败: %v (%s)", err, body)
+	}
+	it := list.Items[0]
+	byName := map[string]store.File{}
+	for _, f := range it.Files {
+		byName[f.Name] = f
+	}
+	fileURL := func(f store.File, query string) string {
+		return e.srv.URL + "/api/items/" + it.ID + "/files/" + f.ID + query
+	}
+
+	// 图片 inline=1：正确 MIME + inline，内容不变
+	req, _ := http.NewRequest(http.MethodGet, fileURL(byName["照片.JPG"], "?inline=1"), nil)
+	resp, got := e.do(t, req)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("内联预览应 200，得到 %d %s", resp.StatusCode, got)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "image/jpeg" {
+		t.Fatalf("图片 Content-Type 应为 image/jpeg，得到 %q", ct)
+	}
+	if cd := resp.Header.Get("Content-Disposition"); !strings.HasPrefix(cd, "inline;") {
+		t.Fatalf("内联预览 Content-Disposition 应为 inline，得到 %q", cd)
+	}
+	if !bytes.Equal(got, jpeg) {
+		t.Fatal("内联预览内容与上传不一致")
+	}
+	if cc := resp.Header.Get("Cache-Control"); cc == "no-store" {
+		t.Fatalf("内联预览应允许浏览器缓存，得到 %q", cc)
+	}
+
+	// 视频预览仍需支持 Range（播放器会分段请求）
+	req, _ = http.NewRequest(http.MethodGet, fileURL(byName["clip.mp4"], "?inline=1"), nil)
+	req.Header.Set("Range", "bytes=0-3")
+	resp, part := e.do(t, req)
+	if resp.StatusCode != http.StatusPartialContent {
+		t.Fatalf("视频预览 Range 应 206，得到 %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "video/mp4" {
+		t.Fatalf("视频 Content-Type 应为 video/mp4，得到 %q", ct)
+	}
+	if !bytes.Equal(part, []byte("fake")) {
+		t.Fatalf("Range 内容不对: %q", part)
+	}
+
+	// 白名单外的类型即使带 inline=1 也回退为附件下载
+	req, _ = http.NewRequest(http.MethodGet, fileURL(byName["说明.txt"], "?inline=1"), nil)
+	resp, _ = e.do(t, req)
+	if ct := resp.Header.Get("Content-Type"); ct != "application/octet-stream" {
+		t.Fatalf("非白名单类型应回退 octet-stream，得到 %q", ct)
+	}
+	if cd := resp.Header.Get("Content-Disposition"); !strings.HasPrefix(cd, "attachment;") {
+		t.Fatalf("非白名单类型应为附件，得到 %q", cd)
+	}
+
+	// SVG 可以内嵌脚本：内联下发时额外带沙箱 CSP
+	req, _ = http.NewRequest(http.MethodGet, fileURL(byName["图标.svg"], "?inline=1"), nil)
+	resp, _ = e.do(t, req)
+	if ct := resp.Header.Get("Content-Type"); ct != "image/svg+xml" {
+		t.Fatalf("SVG Content-Type 应为 image/svg+xml，得到 %q", ct)
+	}
+	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "sandbox") {
+		t.Fatalf("SVG 内联应带沙箱 CSP，得到 %q", csp)
+	}
+
+	// inline=0 显式关闭预览
+	req, _ = http.NewRequest(http.MethodGet, fileURL(byName["照片.JPG"], "?inline=0"), nil)
+	resp, _ = e.do(t, req)
+	if cd := resp.Header.Get("Content-Disposition"); !strings.HasPrefix(cd, "attachment;") {
+		t.Fatalf("inline=0 应为附件，得到 %q", cd)
+	}
+
+	// 预览不计入下载次数（图片 1 次预览 + 视频 Range 1 次 = 0），只有 inline=0 那次计 1
+	_, body = e.do(t, e.newJSONReq(t, http.MethodGet, "/api/items/"+it.ID, nil))
+	after := decodeItem(t, body)
+	for _, f := range after.Files {
+		switch f.Name {
+		case "照片.JPG":
+			if f.Downloads != 1 {
+				t.Fatalf("图片下载次数应为 1（仅 inline=0），得到 %d", f.Downloads)
+			}
+		case "说明.txt":
+			// 非白名单类型 inline=1 回退为附件，按下载计数
+			if f.Downloads != 1 {
+				t.Fatalf("回退为附件的下载次数应为 1，得到 %d", f.Downloads)
+			}
+		default:
+			if f.Downloads != 0 {
+				t.Fatalf("%s 不应计入下载次数，得到 %d", f.Name, f.Downloads)
+			}
+		}
+	}
+}
+
 func TestDeleteSingleFile(t *testing.T) {
 	e := newEnv(t)
 	e.loginAdmin(t)

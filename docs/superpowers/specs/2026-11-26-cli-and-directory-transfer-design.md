@@ -252,7 +252,7 @@ lanbox-cli [-s URL] [--json] [-insecure] [-ca FILE] <command> [args]
 ## 13. 验收清单
 
 1. `echo hi | lanbox-cli put -` → 网页 1 秒内出现该文字。
-2. `lanbox-cli put -r photos -m "内网素材"` → 网页按树展示路径；CLI `ls` 显示附件数与总大小。
+2. `lanbox-cli put -r photos -m "共享素材"` → 网页按树展示路径；CLI `ls` 显示附件数与总大小。
 3. `lanbox-cli get <id> -o /tmp/x` → `/tmp/x/photos/...` 结构与 sha256 正确。
 4. `lanbox-cli get <id> --zip /tmp/x.zip` → `unzip -t` 通过，条目名与路径一致。
 5. 网页拖入含子目录的文件夹 → 上传成功且路径保留；「下载全部 (.zip)」可用。

@@ -1505,7 +1505,7 @@ func TestListGetTakenAndDelete(t *testing.T) {
 	c := loginClient(t, e)
 	ctx := context.Background()
 
-	seeded, err := e.store.Create(store.CreateInput{Text: "内网素材", CreatedBy: "admin"})
+	seeded, err := e.store.Create(store.CreateInput{Text: "共享素材", CreatedBy: "admin"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1518,7 +1518,7 @@ func TestListGetTakenAndDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("列表失败: %v", err)
 	}
-	if len(res.Items) != 1 || res.Items[0].ID != seeded.ID || res.Items[0].Text != "内网素材" {
+	if len(res.Items) != 1 || res.Items[0].ID != seeded.ID || res.Items[0].Text != "共享素材" {
 		t.Fatalf("列表内容不对: %+v", res.Items)
 	}
 	if res.Items[0].TotalSize() != 3 {
@@ -1949,14 +1949,14 @@ func TestPutListTakenAndDelete(t *testing.T) {
 	ctx := context.Background()
 
 	var sent, total int64
-	it, err := c.Put(ctx, "内网素材", []client.Upload{
+	it, err := c.Put(ctx, "共享素材", []client.Upload{
 		{Path: "photos/2024/a.jpg", Size: 3, Open: readerFunc("aaa")},
 		{Path: "notes.txt", Size: 5, Open: readerFunc("hello")},
 	}, func(s, t int64) { sent, total = s, t })
 	if err != nil {
 		t.Fatalf("上传失败: %v", err)
 	}
-	if it.Text != "内网素材" || len(it.Files) != 2 {
+	if it.Text != "共享素材" || len(it.Files) != 2 {
 		t.Fatalf("返回内容不对: %+v", it)
 	}
 	if it.Files[0].Path != "photos/2024/a.jpg" || it.Files[1].Path != "notes.txt" {
@@ -4018,8 +4018,8 @@ lanbox-cli login -s https://192.168.1.9:8443 -u admin
 # 密码来源：LANBOX_PASSWORD 环境变量 > 管道 stdin > 终端无回显提示
 
 # 发布文字 / 单个文件 / 整个目录（目录必须 -r）
-echo "给内网的一句话" | lanbox-cli put -
-lanbox-cli put 报告.pdf -m "内网同事收"
+echo "给同事的一句话" | lanbox-cli put -
+lanbox-cli put 报告.pdf -m "同事收"
 lanbox-cli put -r ./素材 -m "素材目录"
 
 # 查看与取回

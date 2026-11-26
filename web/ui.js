@@ -22,6 +22,7 @@ const ICONS = {
     'M17.9 6.1l1.5-1.5',
   ],
   moon: ['M20 13.4A8.2 8.2 0 0 1 10.6 4a8.4 8.4 0 1 0 9.4 9.4Z'],
+  paper: ['M6.5 3.5h7.4L18.5 8v12.5h-12Z', 'M13.7 3.7V8h4.4', 'M9.2 12.2h6', 'M9.2 15.4h4.2'],
   settings: [
     'M12 15.4a3.4 3.4 0 1 0 0-6.8 3.4 3.4 0 0 0 0 6.8Z',
     'M19.2 14.4a1.5 1.5 0 0 0 .3 1.6l.1.1a1.8 1.8 0 1 1-2.6 2.6l-.1-.1a1.5 1.5 0 0 0-2.6 1.1v.3a1.8 1.8 0 1 1-3.6 0v-.2a1.5 1.5 0 0 0-2.6-1.1l-.1.1a1.8 1.8 0 1 1-2.6-2.6l.1-.1a1.5 1.5 0 0 0-1.1-2.6h-.3a1.8 1.8 0 1 1 0-3.6h.2a1.5 1.5 0 0 0 1.1-2.6l-.1-.1a1.8 1.8 0 1 1 2.6-2.6l.1.1a1.5 1.5 0 0 0 2.6-1.1v-.3a1.8 1.8 0 1 1 3.6 0v.2a1.5 1.5 0 0 0 2.6 1.1l.1-.1a1.8 1.8 0 1 1 2.6 2.6l-.1.1a1.5 1.5 0 0 0 1.1 2.6h.3a1.8 1.8 0 1 1 0 3.6h-.2a1.5 1.5 0 0 0-1.3.9Z',
@@ -29,10 +30,22 @@ const ICONS = {
   logout: ['M15 8V5.5A1.5 1.5 0 0 0 13.5 4h-7A1.5 1.5 0 0 0 5 5.5v13A1.5 1.5 0 0 0 6.5 20h7a1.5 1.5 0 0 0 1.5-1.5V16', 'M11 12h9', 'M17 9l3 3-3 3'],
   menu: ['M4 7h16', 'M4 12h16', 'M4 17h16'],
   close: ['M6 6l12 12', 'M18 6L6 18'],
+  'chevron-left': ['M14.5 6l-6 6 6 6'],
+  'chevron-right': ['M9.5 6l6 6-6 6'],
+  'chevron-up': ['M6 14.5l6-6 6 6'],
+  palette: [
+    'M12 20.4a8.4 8.4 0 1 1 8.4-8.4c0 2.1-1.7 3.3-3.6 3.3h-1.3a2 2 0 0 0-1.4 3.4 1.6 1.6 0 0 1-1.2 2.7Z',
+    'M7.6 12.4v.1',
+    'M9.6 8.4v.1',
+    'M14.2 8v.1',
+  ],
   paperclip: ['M20 11.5 12.3 19a4.6 4.6 0 0 1-6.6-6.6l7.8-7.8a3.1 3.1 0 0 1 4.4 4.4l-7.8 7.8a1.5 1.5 0 0 1-2.2-2.2l7.2-7.2'],
   folder: ['M3.5 7.5A1.5 1.5 0 0 1 5 6h4l2 2.2h8A1.5 1.5 0 0 1 20.5 9.7v8.8A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5Z'],
   plus: ['M12 5v14', 'M5 12h14'],
   download: ['M12 4v11', 'M7.5 11l4.5 4.5 4.5-4.5', 'M5 19.5h14'],
+  eye: ['M2.6 12S6.2 5.8 12 5.8 21.4 12 21.4 12 17.8 18.2 12 18.2 2.6 12 2.6 12Z', 'M12 9.4a2.6 2.6 0 1 0 0 5.2 2.6 2.6 0 0 0 0-5.2Z'],
+  play: ['M9 6.4 18.2 12 9 17.6Z'],
+  expand: ['M14 4h6v6', 'M20 4l-6.5 6.5', 'M10 20H4v-6', 'M4 20l6.5-6.5'],
   trash: ['M4.5 7h15', 'M9.5 7V5.2A1.2 1.2 0 0 1 10.7 4h2.6a1.2 1.2 0 0 1 1.2 1.2V7', 'M6.5 7l.8 11.8A1.4 1.4 0 0 0 8.7 20h6.6a1.4 1.4 0 0 0 1.4-1.2L17.5 7'],
   check: ['M5 12.5l4.5 4.5L19 7'],
   undo: ['M9 8H5V4', 'M5 8a8 8 0 1 1 2.5 8.5'],
@@ -42,6 +55,8 @@ const ICONS = {
   key: ['M14.5 4a5 5 0 1 0-3.9 8.1L4 18.7V21h3.5l1.6-1.6v-2h2v-2h1.4l1.9-1.9A5 5 0 0 0 19.5 9 4.9 4.9 0 0 0 14.5 4Z', 'M16.6 7.4v.1'],
   user: ['M12 12.4a3.9 3.9 0 1 0 0-7.8 3.9 3.9 0 0 0 0 7.8Z', 'M4.8 20c.9-3.6 3.8-5.6 7.2-5.6s6.3 2 7.2 5.6'],
   shield: ['M12 3.6 5 6.2v5.3c0 4.1 2.8 7.7 7 8.9 4.2-1.2 7-4.8 7-8.9V6.2Z', 'M9 12l2.2 2.2L15.4 10'],
+  activity: ['M3 12h4l2.5-7 5 14 2.5-7h4'],
+  refresh: ['M20 12a8 8 0 1 1-2.3-5.7', 'M20.5 4.5V9H16'],
 };
 
 export function iconEl(name, extraClass) {
@@ -254,25 +269,35 @@ export function promptPassword({ title, message, confirmText = '保存' }) {
 // ---------- 主题 ----------
 
 const THEME_KEY = 'lanbox.theme';
+const THEME_COLORS = { light: '#fafafa', dark: '#0f0f0f', paper: '#f5ede4' };
+const validPrefs = ['system', 'light', 'dark', 'paper'];
 const media = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 let themePref = readPref();
 
 function readPref() {
   try {
     const v = localStorage.getItem(THEME_KEY);
-    if (v === 'light' || v === 'dark' || v === 'system') return v;
+    if (validPrefs.includes(v)) return v;
   } catch {
     /* 隐私模式忽略 */
   }
   return 'system';
 }
 
+// resolvePref 把偏好落成 data-theme 的取值：light / dark / paper。
+function resolvePref(pref) {
+  if (pref === 'system') return media && media.matches ? 'dark' : 'light';
+  return pref;
+}
+
 function applyTheme() {
-  const dark = themePref === 'dark' || (themePref === 'system' && media && media.matches);
+  const theme = resolvePref(themePref);
   const root = document.documentElement;
-  root.dataset.theme = dark ? 'dark' : 'light';
+  root.dataset.theme = theme;
   root.dataset.themePref = themePref;
-  root.style.colorScheme = dark ? 'dark' : 'light';
+  root.style.colorScheme = theme === 'dark' ? 'dark' : 'light';
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', THEME_COLORS[theme] || THEME_COLORS.light);
   for (const btn of document.querySelectorAll('#theme-picker [data-theme-value]')) {
     btn.setAttribute('aria-checked', String(btn.dataset.themeValue === themePref));
   }

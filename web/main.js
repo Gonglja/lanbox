@@ -1,7 +1,10 @@
 import { api, ApiError, uploadItem } from './api.js';
-import { renderItem, fmtBytes } from './render.js';
+import { renderItem, fmtBytes, dayKey, renderDay, refreshTimes } from './render.js';
+import { renderMarkdown } from './markdown.js';
 import { connectEvents } from './sse.js';
 import { initAdmin, closeAdminDrawer } from './admin.js';
+import { initAccountMenu, closeAccountMenu } from './account.js';
+import { closeStatusPage, initStatusPage, openStatusPage } from './status.js';
 import {
   fillIcons,
   initTheme,
@@ -18,11 +21,44 @@ const state = {
   items: new Map(), // id -> item，最新在前
   cursor: '',
   filter: 'all',
+  view: 'timeline', // timeline（时间线）/ status（状态页）
   q: '',
   pending: [], // 待上传文件
   events: null,
   loaded: false,
+  timesTimer: 0,
+  dayStamp: '',
 };
+
+// ---------- 侧栏收合 ----------
+
+const SIDEBAR_KEY = 'lanbox.sidebar';
+// sidebarRail 为 true 时侧栏只留图标（宽度由 :root[data-sidebar='rail'] 控制）；
+// theme-boot 在首帧前写入 data-sidebar，刷新不会先闪一下宽侧栏。
+let sidebarRail = document.documentElement.dataset.sidebar === 'rail';
+
+function applySidebar() {
+  document.documentElement.dataset.sidebar = sidebarRail ? 'rail' : 'wide';
+  const btn = $('btn-sidebar-collapse');
+  if (!btn) return;
+  const label = sidebarRail ? '展开侧栏' : '收起侧栏';
+  btn.title = label;
+  btn.setAttribute('aria-label', label);
+  btn.setAttribute('aria-expanded', String(!sidebarRail));
+  const icon = $('sidebar-toggle-icon');
+  if (icon) setIcon(icon, sidebarRail ? 'chevron-right' : 'chevron-left');
+}
+
+function setSidebarRail(next) {
+  closeAccountMenu();
+  sidebarRail = Boolean(next);
+  try {
+    localStorage.setItem(SIDEBAR_KEY, sidebarRail ? 'rail' : 'wide');
+  } catch {
+    /* 隐私模式只在本次生效 */
+  }
+  applySidebar();
+}
 
 // ---------- 视图切换 ----------
 
@@ -30,11 +66,14 @@ function showLogin() {
   $('login-view').hidden = false;
   $('app-view').hidden = true;
   closeAdminDrawer();
+  closeAccountMenu();
   closeSidebar();
   if (state.events) {
     state.events.close();
     state.events = null;
   }
+  stopTicker();
+  setView('timeline');
   $('login-username').focus();
 }
 
@@ -45,9 +84,37 @@ function showApp() {
   $('me-name').textContent = state.user.username;
   $('me-role').textContent = role;
   paintAvatar($('me-avatar'), state.user.username);
+  paintAvatar($('composer-avatar'), state.user.username);
   $('btn-admin').hidden = !state.user.is_admin;
+  setView('timeline');
   startEvents();
+  startTicker();
   syncSidebarForViewport();
+}
+
+// ---------- 时间显示 ----------
+
+// 相对时间会随停留时间变旧（「刚刚」→「5 分钟前」），每 30 秒原地刷新一次；
+// 跨零点时日期分隔行需要重排，顺带重建一次列表。
+function startTicker() {
+  stopTicker();
+  state.dayStamp = new Date().toDateString();
+  state.timesTimer = setInterval(() => {
+    if (document.hidden) return;
+    refreshTimes($('items'));
+    const stamp = new Date().toDateString();
+    if (stamp !== state.dayStamp) {
+      state.dayStamp = stamp;
+      renderList();
+    }
+  }, 30000);
+}
+
+function stopTicker() {
+  if (state.timesTimer) {
+    clearInterval(state.timesTimer);
+    state.timesTimer = 0;
+  }
 }
 
 // ---------- 移动端侧栏 ----------
@@ -58,6 +125,7 @@ function openSidebar() {
 }
 
 function closeSidebar() {
+  closeAccountMenu();
   $('app-view').classList.remove('sidebar-open');
   $('sidebar-scrim').hidden = true;
 }
@@ -86,19 +154,28 @@ function updateCounts() {
 function renderList() {
   const box = $('items');
   const nodes = [];
+  let lastDay = '';
   for (const item of state.items.values()) {
+    const key = dayKey(item.created_at);
+    if (key !== lastDay) {
+      nodes.push(renderDay(item.created_at));
+      lastDay = key;
+    }
     nodes.push(renderItem(item, handlers));
   }
   box.replaceChildren(...nodes);
-  $('btn-more').hidden = !state.cursor;
+  $('btn-more').hidden = state.view === 'status' || !state.cursor;
   updateCounts();
   updateEmptyState();
 }
 
 function updateEmptyState() {
-  // 标题只跟筛选/搜索走，和是否有内容无关
-  const searching = Boolean(state.q) || state.filter === 'todo';
-  $('view-title').textContent = searching ? (state.q ? '搜索结果' : '未取走') : '时间线';
+  // 状态页自己占满内容区，不和列表的空状态/标题抢显示
+  if (state.view === 'status') return;
+  // 默认视图不占标题栏；只有搜索/筛选时用标题说明当前列表
+  const title = state.q ? '搜索结果' : state.filter === 'todo' ? '未取走' : '';
+  $('view-title').textContent = title;
+  $('view-title').hidden = !title;
 
   const hasAny = state.items.size > 0;
   $('empty').hidden = hasAny;
@@ -257,6 +334,31 @@ function autoGrow() {
   el.style.height = Math.min(el.scrollHeight, 240) + 'px';
 }
 
+// ---------- Markdown 预览 ----------
+
+let previewOpen = false;
+
+function refreshPreview() {
+  const box = $('composer-preview');
+  const text = $('composer-text').value;
+  if (!previewOpen || !text.trim()) {
+    box.hidden = true;
+    box.replaceChildren();
+    return;
+  }
+  renderMarkdown(box, text);
+  box.hidden = false;
+}
+
+function setPreviewOpen(next) {
+  previewOpen = Boolean(next);
+  const btn = $('btn-md-preview');
+  btn.classList.toggle('is-active', previewOpen);
+  btn.setAttribute('aria-pressed', String(previewOpen));
+  refreshPreview();
+  autoGrow();
+}
+
 async function submitComposer(ev) {
   ev.preventDefault();
   const text = $('composer-text').value.trim();
@@ -286,6 +388,7 @@ async function submitComposer(ev) {
     $('composer-text').value = '';
     state.pending = [];
     refreshPending();
+    refreshPreview();
     autoGrow();
     label.textContent = '上传完成';
     await loadFirstPage();
@@ -386,6 +489,7 @@ function bind() {
   $('composer').addEventListener('submit', submitComposer);
   $('btn-pick-files').addEventListener('click', () => $('composer-files').click());
   $('btn-pick-dir').addEventListener('click', () => $('composer-dir').click());
+  $('btn-md-preview').addEventListener('click', () => setPreviewOpen(!previewOpen));
 
   $('composer-files').addEventListener('change', (ev) => {
     addFiles(ev.target.files);
@@ -402,7 +506,10 @@ function bind() {
   });
 
   const text = $('composer-text');
-  text.addEventListener('input', autoGrow);
+  text.addEventListener('input', () => {
+    autoGrow();
+    refreshPreview();
+  });
   text.addEventListener('keydown', (ev) => {
     if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') {
       ev.preventDefault();
@@ -449,9 +556,16 @@ function bind() {
 
   $('filter-all').addEventListener('click', () => setFilter('all'));
   $('filter-todo').addEventListener('click', () => setFilter('todo'));
+  $('filter-status').addEventListener('click', () => {
+    closeAdminDrawer();
+    closeSidebar();
+    setView('status');
+  });
 
   let searchTimer = null;
   $('search').addEventListener('input', (ev) => {
+    closeAdminDrawer();
+    if (state.view === 'status') setView('timeline');
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
       state.q = ev.target.value.trim();
@@ -464,15 +578,42 @@ function bind() {
   $('btn-sidebar-open').addEventListener('click', openSidebar);
   $('btn-sidebar-close').addEventListener('click', closeSidebar);
   $('sidebar-scrim').addEventListener('click', closeSidebar);
+  $('btn-sidebar-collapse').addEventListener('click', () => setSidebarRail(!sidebarRail));
+  $('btn-rail-search').addEventListener('click', () => {
+    setSidebarRail(false);
+    setTimeout(() => $('search').focus(), 0);
+  });
   window.addEventListener('resize', syncSidebarForViewport);
 }
 
 async function setFilter(f) {
+  closeAdminDrawer();
   state.filter = f;
-  $('filter-all').classList.toggle('is-active', f === 'all');
-  $('filter-todo').classList.toggle('is-active', f === 'todo');
+  setView('timeline');
   closeSidebar();
   await loadFirstPage();
+}
+
+// setView 切换时间线与状态页：状态页藏起发布区/列表/分页，只留统计卡片。
+function setView(view) {
+  state.view = view === 'status' ? 'status' : 'timeline';
+  const status = state.view === 'status';
+  $('status-view').hidden = !status;
+  $('composer').hidden = status;
+  $('items').hidden = status;
+  $('empty').hidden = status || state.items.size > 0;
+  $('btn-more').hidden = status || !state.cursor;
+  $('view-title').textContent = status ? '状态' : state.q ? '搜索结果' : state.filter === 'todo' ? '未取走' : '';
+  $('view-title').hidden = !$('view-title').textContent;
+  $('filter-all').classList.toggle('is-active', !status && state.filter === 'all');
+  $('filter-todo').classList.toggle('is-active', !status && state.filter === 'todo');
+  $('filter-status').classList.toggle('is-active', status);
+  if (status) {
+    openStatusPage();
+  } else {
+    closeStatusPage();
+    updateEmptyState();
+  }
 }
 
 // collectDroppedFiles 把拖入的 DataTransfer 展开成带 relPath 的 File 列表。
@@ -520,9 +661,12 @@ async function collectDroppedFiles(dataTransfer) {
 
 async function main() {
   fillIcons();
+  applySidebar();
   initTheme();
   bind();
   initAdmin(() => state.user);
+  initAccountMenu();
+  initStatusPage();
   try {
     state.user = await api.me();
     showApp();

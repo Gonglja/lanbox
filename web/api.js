@@ -29,6 +29,7 @@ async function request(method, url, body) {
 
 export const api = {
   me: () => request('GET', '/api/me'),
+  stats: () => request('GET', '/api/stats'),
   login: (username, password) => request('POST', '/api/login', { username, password }),
   logout: () => request('POST', '/api/logout'),
 

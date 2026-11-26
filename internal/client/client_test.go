@@ -115,7 +115,7 @@ func TestListGetTakenAndDelete(t *testing.T) {
 	c := loginClient(t, e)
 	ctx := context.Background()
 
-	seeded, err := e.store.Create(store.CreateInput{Text: "内网素材", CreatedBy: "admin"})
+	seeded, err := e.store.Create(store.CreateInput{Text: "共享素材", CreatedBy: "admin"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestListGetTakenAndDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("列表失败: %v", err)
 	}
-	if len(res.Items) != 1 || res.Items[0].ID != seeded.ID || res.Items[0].Text != "内网素材" {
+	if len(res.Items) != 1 || res.Items[0].ID != seeded.ID || res.Items[0].Text != "共享素材" {
 		t.Fatalf("列表内容不对: %+v", res.Items)
 	}
 	if res.Items[0].TotalSize() != 3 {
@@ -229,20 +229,20 @@ func TestPutListTakenAndDelete(t *testing.T) {
 	ctx := context.Background()
 
 	var sent, total int64
-	it, err := c.Put(ctx, "内网素材", []client.Upload{
+	it, err := c.Put(ctx, "共享素材", []client.Upload{
 		{Path: "photos/2024/a.jpg", Size: 3, Open: readerFunc("aaa")},
 		{Path: "notes.txt", Size: 5, Open: readerFunc("hello")},
 	}, func(s, tt int64) { sent, total = s, tt })
 	if err != nil {
 		t.Fatalf("上传失败: %v", err)
 	}
-	if it.Text != "内网素材" || len(it.Files) != 2 {
+	if it.Text != "共享素材" || len(it.Files) != 2 {
 		t.Fatalf("返回内容不对: %+v", it)
 	}
 	if it.Files[0].Path != "photos/2024/a.jpg" || it.Files[1].Path != "notes.txt" {
 		t.Fatalf("路径应保留: %+v", it.Files)
 	}
-	if sent != total || total != 8+int64(len("内网素材")) {
+	if sent != total || total != 8+int64(len("共享素材")) {
 		t.Fatalf("进度回调不对: sent=%d total=%d", sent, total)
 	}
 

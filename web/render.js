@@ -1,5 +1,7 @@
 // 纯展示逻辑：格式化与卡片渲染。
 import { paintAvatar, iconEl } from './ui.js';
+import { renderMarkdown } from './markdown.js';
+import { previewKind, mediaSrc, downloadSrc, openLightbox } from './media.js';
 
 export function fmtBytes(n) {
   if (n < 1024) return n + ' B';
@@ -28,15 +30,8 @@ function fmtTime(iso) {
   if (diff >= 0 && diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
   if (diff >= 0 && diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
 
-  const hm = pad(d.getHours()) + ':' + pad(d.getMinutes());
-  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-  const sameDay = d.toDateString() === now.toDateString();
-  if (sameDay) return '今天 ' + hm;
-  if (d.toDateString() === yesterday.toDateString()) return '昨天 ' + hm;
-  if (d.getFullYear() === now.getFullYear()) {
-    return `${d.getMonth() + 1} 月 ${d.getDate()} 日 ${hm}`;
-  }
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hm}`;
+  // 超过一天时日期已由分组行给出，卡片里只留时分。
+  return pad(d.getHours()) + ':' + pad(d.getMinutes());
 }
 
 function fmtAbsolute(iso) {
@@ -44,6 +39,44 @@ function fmtAbsolute(iso) {
   if (Number.isNaN(d.getTime())) return iso;
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
     `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+// dayKey 用本地日期分组，避免跨零点的内容被拆到两天。
+export function dayKey(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso || '');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function fmtDay(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '未知日期';
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const that = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const days = Math.round((today - that) / 86400000);
+  if (days === 0) return '今天';
+  if (days === 1) return '昨天';
+  if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1} 月 ${d.getDate()} 日`;
+  return `${d.getFullYear()} 年 ${d.getMonth() + 1} 月 ${d.getDate()} 日`;
+}
+
+// renderDay 生成时间线的日期分隔行；同一组只插一次。
+export function renderDay(iso) {
+  const row = document.createElement('div');
+  row.className = 'day-row';
+  const label = document.createElement('span');
+  label.className = 'day-label';
+  label.textContent = fmtDay(iso);
+  row.append(label);
+  return row;
+}
+
+// refreshTimes 只刷新相对时间文本，不重建卡片（避免打断 hover/focus）。
+export function refreshTimes(root = document) {
+  for (const el of root.querySelectorAll('time.memo-time[datetime]')) {
+    el.textContent = fmtTime(el.getAttribute('datetime'));
+  }
 }
 
 // renderItem 依据模板生成一张卡片，并把事件接到 handlers 上。
@@ -70,11 +103,21 @@ export function renderItem(item, handlers) {
   time.dateTime = item.created_at || '';
 
   node.querySelector('.memo-taken').hidden = !item.taken;
-  node.querySelector('.memo-text').textContent = item.text || '';
+
+  const textEl = node.querySelector('.memo-text');
+  if (item.text) renderMarkdown(textEl, item.text);
 
   const fileList = node.querySelector('.files');
   const files = [...(item.files || [])].sort((a, b) =>
     (a.path || a.name).localeCompare(b.path || b.name));
+
+  // 图片/视频先出一行预览，文件列表仍保留（下载、删除、打包都从那里走）。
+  const mediaBox = node.querySelector('.media');
+  for (const f of files) {
+    const tile = mediaTile(item, f);
+    if (tile) mediaBox.append(tile);
+  }
+  mediaBox.hidden = mediaBox.childElementCount === 0;
 
   for (const f of files) {
     const rel = f.path || f.name;
@@ -151,4 +194,64 @@ export function renderItem(item, handlers) {
   delBtn.addEventListener('click', () => handlers.onDelete(item));
 
   return node;
+}
+
+// mediaTile 生成一个图片缩略图或视频首帧卡片；不支持的扩展名返回 null。
+function mediaTile(item, f) {
+  const kind = previewKind(f.name);
+  if (!kind) return null;
+
+  const src = mediaSrc(item.id, f.id);
+  const label = f.path || f.name;
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'media-item';
+  btn.title = (kind === 'image' ? '查看图片：' : '播放视频：') + label;
+  btn.setAttribute('aria-label', btn.title);
+
+  let media;
+  if (kind === 'image') {
+    media = document.createElement('img');
+    media.loading = 'lazy';
+    media.decoding = 'async';
+    media.alt = f.name;
+    media.src = src;
+  } else {
+    media = document.createElement('video');
+    media.src = src;
+    media.preload = 'metadata';
+    media.muted = true;
+    media.playsInline = true;
+    media.tabIndex = -1; // 点击交给外层按钮，避免原生控件抢事件
+    media.setAttribute('aria-hidden', 'true');
+  }
+
+  // 预览失败（类型被服务端回退/文件损坏）时退化成不可点的小提示，仍可从文件列表下载。
+  media.addEventListener('error', () => {
+    btn.classList.add('is-broken');
+    btn.disabled = true;
+    btn.title = '无法预览：' + label;
+  });
+
+  btn.append(media);
+
+  if (kind === 'video') {
+    const badge = document.createElement('span');
+    badge.className = 'media-badge';
+    badge.append(iconEl('play'));
+    btn.append(badge);
+  }
+
+  btn.addEventListener('click', () => {
+    openLightbox({
+      src,
+      name: label,
+      kind,
+      href: downloadSrc(item.id, f.id),
+      opener: btn,
+    });
+  });
+
+  return btn;
 }

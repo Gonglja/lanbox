@@ -15,10 +15,6 @@ const GROUPS = [
     ],
   },
   {
-    title: '会话',
-    fields: [{ key: 'session_ttl_hours', label: '会话有效期', unit: '小时', min: 1, step: 1 }],
-  },
-  {
     title: '网络与证书',
     fields: [
       { key: 'listen', label: '监听地址', type: 'text', hint: '如 :443 或 192.168.1.9:443（改后需重启）' },
@@ -26,6 +22,10 @@ const GROUPS = [
       { key: 'tls.key_file', label: '私钥文件', type: 'text', hint: '与证书同时留空或同时填写' },
       { key: 'data_dir', label: '数据目录', type: 'text' },
     ],
+  },
+  {
+    title: '会话',
+    fields: [{ key: 'session_ttl_hours', label: '会话有效期', unit: '小时', min: 1, step: 1 }],
   },
   {
     title: '局域网发现',

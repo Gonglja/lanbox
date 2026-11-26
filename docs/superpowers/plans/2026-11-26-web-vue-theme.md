@@ -1524,7 +1524,7 @@ async function onSubmit() {
   <div class="page">
     <form class="card login" @submit.prevent="onSubmit">
       <div class="logo">lan<span>box</span></div>
-      <p class="muted slogan">内外网共享的留言板与文件中转站</p>
+      <p class="muted slogan">共享的留言板与文件中转站</p>
 
       <label class="field">
         <span>用户名</span>

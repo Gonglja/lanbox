@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#fafafa">
 <title>lanbox</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <script src="/theme-boot.js"></script>
@@ -17,7 +18,7 @@
       <span class="brand-mark" aria-hidden="true"></span>
       <span class="brand-name">lanbox</span>
     </div>
-    <p class="auth-sub">内网与外网之间的文件、消息交换</p>
+    <p class="auth-sub">文件与消息共享</p>
     <label class="field">
       <span class="field-label">用户名</span>
       <input id="login-username" name="username" autocomplete="username" required autofocus>
@@ -46,20 +47,27 @@
     </div>
 
     <nav class="nav" aria-label="视图">
-      <button id="filter-all" class="nav-row is-active" type="button">
+      <button id="filter-all" class="nav-row is-active" type="button" title="全部" aria-label="全部">
         <span class="icon" data-icon="timeline"></span>
         <span class="nav-label">全部</span>
         <span id="count-all" class="nav-count"></span>
       </button>
-      <button id="filter-todo" class="nav-row" type="button">
+      <button id="filter-todo" class="nav-row" type="button" title="未取走" aria-label="未取走">
         <span class="icon" data-icon="circle-dashed"></span>
         <span class="nav-label">未取走</span>
         <span id="count-todo" class="nav-count"></span>
+      </button>
+      <button id="filter-status" class="nav-row" type="button" title="状态" aria-label="状态">
+        <span class="icon" data-icon="activity"></span>
+        <span class="nav-label">状态</span>
       </button>
     </nav>
 
     <div class="sidebar-section">
       <span class="section-label">搜索</span>
+      <button id="btn-rail-search" class="btn btn-icon rail-only" type="button" title="搜索" aria-label="搜索">
+        <span class="icon" data-icon="search"></span>
+      </button>
       <div class="search">
         <span class="icon" data-icon="search"></span>
         <input id="search" type="search" placeholder="搜索文字或文件名" aria-label="搜索内容">
@@ -68,35 +76,53 @@
 
     <div class="sidebar-fill"></div>
 
-    <div class="sidebar-section">
-      <span class="section-label">外观</span>
-      <div id="theme-picker" class="segmented" role="radiogroup" aria-label="外观主题">
-        <button type="button" role="radio" data-theme-value="system" aria-checked="false">
-          <span class="icon" data-icon="auto"></span><span class="seg-text">跟随系统</span>
-        </button>
-        <button type="button" role="radio" data-theme-value="light" aria-checked="false">
-          <span class="icon" data-icon="sun"></span><span class="seg-text">亮色</span>
-        </button>
-        <button type="button" role="radio" data-theme-value="dark" aria-checked="false">
-          <span class="icon" data-icon="moon"></span><span class="seg-text">暗色</span>
-        </button>
-      </div>
-    </div>
-
     <div class="sidebar-account">
-      <span id="me-avatar" class="avatar" aria-hidden="true"></span>
-      <span class="account-main">
-        <span id="me-name" class="account-name"></span>
-        <span id="me-role" class="account-role"></span>
-      </span>
-      <button id="btn-admin" class="btn btn-sm" type="button" hidden>
-        <span class="icon" data-icon="settings"></span>管理
-      </button>
-      <button id="btn-logout" class="btn btn-icon" type="button" aria-label="登出" title="登出">
-        <span class="icon" data-icon="logout"></span>
+      <button id="btn-account" class="account-btn" type="button"
+        aria-haspopup="menu" aria-expanded="false" aria-controls="account-menu" title="账号菜单">
+        <span id="me-avatar" class="avatar" aria-hidden="true"></span>
+        <span class="account-main">
+          <span id="me-name" class="account-name"></span>
+          <span id="me-role" class="account-role"></span>
+        </span>
+        <span class="icon account-chevron" data-icon="chevron-up"></span>
       </button>
     </div>
   </aside>
+
+  <!-- 账号菜单：fixed 挂在侧栏外，避免被侧栏 overflow / 移动端 transform 裁剪错位 -->
+  <div id="account-menu" class="menu" role="menu" aria-label="账号菜单" hidden>
+    <button id="btn-theme-menu" class="menu-row" type="button" role="menuitem"
+      aria-expanded="false" aria-controls="theme-picker">
+      <span class="icon" data-icon="palette"></span>
+      <span class="menu-label">外观</span>
+      <span class="icon menu-caret" data-icon="chevron-right"></span>
+    </button>
+    <div id="theme-picker" class="menu-sub" role="group" aria-label="外观主题" hidden>
+      <button type="button" role="menuitemradio" data-theme-value="system" aria-checked="false">
+        <span class="icon" data-icon="auto"></span><span class="seg-text">跟随系统</span>
+        <span class="icon menu-check" data-icon="check"></span>
+      </button>
+      <button type="button" role="menuitemradio" data-theme-value="light" aria-checked="false">
+        <span class="icon" data-icon="sun"></span><span class="seg-text">亮色</span>
+        <span class="icon menu-check" data-icon="check"></span>
+      </button>
+      <button type="button" role="menuitemradio" data-theme-value="dark" aria-checked="false">
+        <span class="icon" data-icon="moon"></span><span class="seg-text">暗色</span>
+        <span class="icon menu-check" data-icon="check"></span>
+      </button>
+      <button type="button" role="menuitemradio" data-theme-value="paper" aria-checked="false">
+        <span class="icon" data-icon="paper"></span><span class="seg-text">纸张</span>
+        <span class="icon menu-check" data-icon="check"></span>
+      </button>
+    </div>
+    <div class="menu-sep" role="separator"></div>
+    <button id="btn-admin" class="menu-row" type="button" role="menuitem" hidden>
+      <span class="icon" data-icon="settings"></span><span class="menu-label">管理</span>
+    </button>
+    <button id="btn-logout" class="menu-row" type="button" role="menuitem">
+      <span class="icon" data-icon="logout"></span><span class="menu-label">退出登录</span>
+    </button>
+  </div>
 
   <div id="sidebar-scrim" class="scrim" hidden></div>
 
@@ -105,7 +131,11 @@
       <button id="btn-sidebar-open" class="btn btn-icon only-mobile" type="button" aria-label="打开侧栏">
         <span class="icon" data-icon="menu"></span>
       </button>
-      <h1 id="view-title" class="view-title">时间线</h1>
+      <button id="btn-sidebar-collapse" class="btn btn-icon only-desktop sidebar-toggle" type="button"
+        aria-label="收起侧栏" aria-expanded="true" aria-controls="sidebar" title="收起侧栏">
+        <span id="sidebar-toggle-icon" class="icon" data-icon="chevron-left"></span>
+      </button>
+      <h1 id="view-title" class="view-title" hidden></h1>
       <span class="spacer"></span>
       <span id="sse-state" class="pill sse" title="实时连接状态" aria-live="polite">
         <span class="dot"></span><span class="sse-text">连接中…</span>
@@ -116,27 +146,47 @@
       <div class="column">
 
         <form id="composer" class="composer" autocomplete="off">
-          <textarea id="composer-text" class="composer-input" rows="2"
-            placeholder="有什么想分享的…（支持拖入文件/文件夹、Ctrl+V 粘贴截图）"></textarea>
-          <ul id="pending-files" class="chips"></ul>
-          <div class="composer-bar">
-            <button id="btn-pick-files" class="btn btn-icon" type="button" title="选择文件" aria-label="选择文件">
-              <span class="icon" data-icon="paperclip"></span>
-            </button>
-            <button id="btn-pick-dir" class="btn btn-icon" type="button" title="选择文件夹" aria-label="选择文件夹">
-              <span class="icon" data-icon="folder"></span>
-            </button>
-            <input id="composer-files" type="file" multiple hidden>
-            <input id="composer-dir" type="file" webkitdirectory directory multiple hidden>
-            <span id="limit-hint" class="hint"></span>
-            <span class="spacer"></span>
-            <button type="submit" id="btn-send" class="btn btn-primary">发送</button>
-          </div>
-          <div id="progress" class="progress" hidden>
-            <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
-            <span id="progress-text" class="progress-text"></span>
+          <span id="composer-avatar" class="avatar composer-avatar" aria-hidden="true"></span>
+          <div class="composer-main">
+            <textarea id="composer-text" class="composer-input" rows="2"
+              placeholder="写点什么（支持 Markdown），或拖入文件…"
+              title="支持 Markdown、拖入文件/文件夹、Ctrl+V 粘贴截图"></textarea>
+            <div id="composer-preview" class="composer-preview" hidden></div>
+            <ul id="pending-files" class="chips"></ul>
+            <div class="composer-bar">
+              <button id="btn-pick-files" class="btn btn-icon" type="button" title="选择文件" aria-label="选择文件">
+                <span class="icon" data-icon="paperclip"></span>
+              </button>
+              <button id="btn-pick-dir" class="btn btn-icon" type="button" title="选择文件夹" aria-label="选择文件夹">
+                <span class="icon" data-icon="folder"></span>
+              </button>
+              <button id="btn-md-preview" class="btn btn-icon" type="button" title="Markdown 预览"
+                aria-label="Markdown 预览" aria-pressed="false">
+                <span class="icon" data-icon="eye"></span>
+              </button>
+              <input id="composer-files" type="file" multiple hidden>
+              <input id="composer-dir" type="file" webkitdirectory directory multiple hidden>
+              <span id="limit-hint" class="hint"></span>
+              <span class="spacer"></span>
+              <button type="submit" id="btn-send" class="btn btn-primary">发送</button>
+            </div>
+            <div id="progress" class="progress" hidden>
+              <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
+              <span id="progress-text" class="progress-text"></span>
+            </div>
           </div>
         </form>
+
+        <section id="status-view" class="status-page" hidden aria-label="服务状态">
+          <div class="status-bar">
+            <p id="status-hint" class="status-hint">加载中…</p>
+            <button id="btn-status-refresh" class="btn btn-sm" type="button" title="立即刷新" aria-label="立即刷新">
+              <span class="icon" data-icon="refresh"></span><span class="btn-label">刷新</span>
+            </button>
+          </div>
+          <p id="status-error" class="field-error" hidden></p>
+          <div id="status-cards" class="status-cards"></div>
+        </section>
 
         <div id="empty" class="empty" hidden>
           <span id="empty-icon" class="icon icon-lg" data-icon="sparkles"></span>
@@ -151,12 +201,12 @@
   </main>
 </div>
 
-<!-- ============ 管理抽屉 ============ -->
-<aside id="admin-drawer" class="drawer" role="dialog" aria-modal="true" aria-labelledby="admin-title" hidden>
+<!-- ============ 管理页 ============ -->
+<aside id="admin-drawer" class="drawer" role="region" aria-labelledby="admin-title" hidden>
   <div class="drawer-head">
     <h2 id="admin-title" class="drawer-title">管理</h2>
     <span class="spacer"></span>
-    <button id="btn-close-admin" class="btn btn-icon" type="button" aria-label="关闭管理面板">
+    <button id="btn-close-admin" class="btn btn-icon" type="button" aria-label="关闭管理面板" title="关闭管理">
       <span class="icon" data-icon="close"></span>
     </button>
   </div>
@@ -204,7 +254,6 @@
     </section>
   </div>
 </aside>
-<div id="drawer-scrim" class="scrim" hidden></div>
 
 <!-- ============ 重启遮罩 ============ -->
 <div id="restart-mask" class="mask" hidden>
@@ -229,7 +278,8 @@
       <span class="pill pill-ok memo-taken" hidden>已取走</span>
       <time class="memo-time"></time>
     </div>
-    <p class="memo-text"></p>
+    <div class="memo-text"></div>
+    <div class="media" hidden></div>
     <ul class="files"></ul>
     <div class="memo-foot">
       <button class="btn btn-sm act-taken" type="button"></button>
