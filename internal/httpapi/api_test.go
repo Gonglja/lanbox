@@ -1,6 +1,7 @@
 package httpapi_test
 
 import (
+	"archive/zip"
 	"bufio"
 	"bytes"
 	"crypto/sha256"
@@ -859,4 +860,66 @@ func (e *env) uploadParts(t *testing.T, parts []uploadPart) store.Item {
 		t.Fatalf("上传应 201，得到 %d %s", resp.StatusCode, body)
 	}
 	return decodeItem(t, body)
+}
+
+func TestDownloadZip(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+	it := e.uploadParts(t, []uploadPart{
+		{field: "files:photos/2024/a.jpg", filename: "a.jpg", body: "aaa"},
+		{field: "files", filename: "notes.txt", body: "hello"},
+	})
+
+	resp, body := e.do(t, e.newJSONReq(t, http.MethodGet, "/api/items/"+it.ID+"/zip", nil))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("zip 应 200，得到 %d %s", resp.StatusCode, body)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/zip" {
+		t.Fatalf("Content-Type 应为 application/zip，得到 %q", ct)
+	}
+	if cd := resp.Header.Get("Content-Disposition"); !strings.Contains(cd, "lanbox-"+it.ID+".zip") {
+		t.Fatalf("Content-Disposition 不对: %q", cd)
+	}
+
+	zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+	if err != nil {
+		t.Fatalf("解析 zip 失败: %v", err)
+	}
+	got := map[string]string{}
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		got[f.Name] = string(raw)
+	}
+	if got["photos/2024/a.jpg"] != "aaa" || got["notes.txt"] != "hello" {
+		t.Fatalf("zip 内容不对: %+v", got)
+	}
+}
+
+func TestDownloadZipWithoutFiles(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+	it := e.uploadParts(t, []uploadPart{{field: "text", filename: "", body: "只有文字"}})
+	resp, body := e.do(t, e.newJSONReq(t, http.MethodGet, "/api/items/"+it.ID+"/zip", nil))
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("无附件应 400，得到 %d %s", resp.StatusCode, body)
+	}
+	if !bytes.Contains(body, []byte("no_files")) {
+		t.Fatalf("错误码应为 no_files: %s", body)
+	}
+}
+
+func TestDownloadZipRequiresAuth(t *testing.T) {
+	e := newEnv(t)
+	resp, body := e.doWith(t, e.clientNoJar, e.newJSONReq(t, http.MethodGet, "/api/items/anything/zip", nil))
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("未登录应 401，得到 %d %s", resp.StatusCode, body)
+	}
 }

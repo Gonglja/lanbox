@@ -63,6 +63,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/items/{id}", s.withAuth(s.handleDeleteItem))
 	s.mux.HandleFunc("DELETE /api/items/{id}/files/{fid}", s.withAuth(s.handleDeleteFile))
 	s.mux.HandleFunc("GET /api/items/{id}/files/{fid}", s.withAuth(s.handleDownload))
+	s.mux.HandleFunc("GET /api/items/{id}/zip", s.withAuth(s.handleDownloadZip))
 	s.mux.HandleFunc("GET /api/events", s.withAuth(s.handleEvents))
 
 	s.mux.HandleFunc("GET /api/users", s.withAdmin(s.handleListUsers))
