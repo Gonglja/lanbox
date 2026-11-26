@@ -80,7 +80,8 @@ func writeFileSync(path string, data []byte, perm os.FileMode) error {
 	return f.Close()
 }
 
-func loadSession() (*client.Session, error) {
+// loadSessionOptional 与 loadSession 相同，但没有会话文件时返回 (nil, nil)。
+func loadSessionOptional() (*client.Session, error) {
 	path, err := sessionPath()
 	if err != nil {
 		return nil, err
@@ -88,7 +89,7 @@ func loadSession() (*client.Session, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("%w: 尚未登录，请先运行 lanbox-cli login -s <地址>", errAuth)
+			return nil, nil
 		}
 		return nil, fmt.Errorf("读取会话失败: %w", err)
 	}
@@ -100,6 +101,18 @@ func loadSession() (*client.Session, error) {
 		return nil, fmt.Errorf("会话文件不完整，请重新登录")
 	}
 	return &s, nil
+}
+
+// loadSession 读取会话；没有会话时返回 errAuth 并以"尚未登录"提示。
+func loadSession() (*client.Session, error) {
+	s, err := loadSessionOptional()
+	if err != nil {
+		return nil, err
+	}
+	if s == nil {
+		return nil, fmt.Errorf("%w: 尚未登录，请先运行 lanbox-cli login -s <地址>", errAuth)
+	}
+	return s, nil
 }
 
 func removeSession() error {

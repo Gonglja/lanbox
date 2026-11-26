@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -36,6 +37,7 @@ type env struct {
 	auth          *auth.Manager
 	cfg           config.Config
 	adminPassword string
+	restarts      *int
 }
 
 // testMaxFilesPerItem 刻意取小值，让「超过附件数量」的用例只需几十个 part；
@@ -44,14 +46,36 @@ const testMaxFilesPerItem = 20
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	cfg := config.Defaults()
-	cfg.DataDir = t.TempDir()
-	cfg.MaxFileSizeMB = 8
-	cfg.MaxItemSizeMB = 16
-	cfg.MinFreeDiskMB = 0
-	cfg.MaxFilesPerItem = testMaxFilesPerItem
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	body := fmt.Sprintf(`{"data_dir":%q,"max_file_size_mb":8,"max_item_size_mb":16,"min_free_disk_mb":0,"max_files_per_item":%d}`,
+		dir, testMaxFilesPerItem)
+	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("写配置失败: %v", err)
+	}
+	var st *store.Store
+	restarts := 0
+	live, err := config.OpenLive(cfgPath, config.Hooks{
+		Apply: func(prev, next config.Config) error {
+			if st != nil {
+				st.SetLimits(store.Options{
+					MaxFileBytes: next.MaxFileBytes(),
+					MinFreeBytes: next.MinFreeBytes(),
+					MaxTextBytes: next.MaxTextBytes,
+					MaxFiles:     next.MaxFilesPerItem,
+					MaxItemBytes: next.MaxItemBytes(),
+				})
+			}
+			return nil
+		},
+		Restart: func() { restarts++ },
+	})
+	if err != nil {
+		t.Fatalf("打开 Live 失败: %v", err)
+	}
+	cfg := live.Current()
 
-	st, err := store.Open(filepath.Join(cfg.DataDir, "items"), store.Options{
+	st, err = store.Open(filepath.Join(cfg.DataDir, "items"), store.Options{
 		MaxFileBytes: cfg.MaxFileBytes(),
 		MinFreeBytes: 0,
 		MaxTextBytes: cfg.MaxTextBytes,
@@ -69,7 +93,10 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatalf("初始化管理员失败: %v", err)
 	}
-	s := httpapi.New(httpapi.Options{Cfg: cfg, Store: st, Auth: am, Web: lanbox.WebFS(), Log: log.New(io.Discard, "", 0)})
+	s := httpapi.New(httpapi.Options{
+		Cfg: cfg, Store: st, Auth: am, Web: lanbox.WebFS(), Log: log.New(io.Discard, "", 0),
+		Live: live, Version: "test", StartedAt: time.Now(),
+	})
 	srv := httptest.NewTLSServer(s)
 	t.Cleanup(srv.Close)
 
@@ -85,6 +112,7 @@ func newEnv(t *testing.T) *env {
 		auth:          am,
 		cfg:           cfg,
 		adminPassword: pw,
+		restarts:      &restarts,
 	}
 }
 
@@ -975,5 +1003,128 @@ func TestDownloadZipSetsNoStore(t *testing.T) {
 	}
 	if got := rec.Header().Get("Content-Length"); got != "" {
 		t.Fatalf("handler 不应显式设置 Content-Length，得到 %q", got)
+	}
+}
+
+func TestHealthzIsPublic(t *testing.T) {
+	e := newEnv(t)
+	resp, body := e.doWith(t, e.clientNoJar, e.newJSONReq(t, http.MethodGet, "/api/healthz", nil))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("healthz 应公开可访问，得到 %d %s", resp.StatusCode, body)
+	}
+	var got struct {
+		OK      bool   `json:"ok"`
+		Name    string `json:"name"`
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil || !got.OK || got.Name != "lanbox" || got.Version != "test" {
+		t.Fatalf("healthz 响应不对: %s", body)
+	}
+	if resp.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("healthz 应 no-store，得到 %q", resp.Header.Get("Cache-Control"))
+	}
+}
+
+func TestConfigRequiresAdmin(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+	resp, body := e.do(t, e.newJSONReq(t, http.MethodPost, "/api/users", map[string]any{
+		"username": "bob", "password": "password123", "is_admin": false,
+	}))
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("创建普通用户失败: %d %s", resp.StatusCode, body)
+	}
+	e.do(t, e.newJSONReq(t, http.MethodPost, "/api/logout", nil))
+	e.login(t, "bob", "password123")
+
+	resp, body = e.do(t, e.newJSONReq(t, http.MethodGet, "/api/config", nil))
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("普通成员读配置应 403，得到 %d %s", resp.StatusCode, body)
+	}
+	resp, body = e.do(t, e.newJSONReq(t, http.MethodPut, "/api/config", map[string]any{
+		"values": map[string]any{"max_text_bytes": 10},
+	}))
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("普通成员写配置应 403，得到 %d %s", resp.StatusCode, body)
+	}
+	resp, body = e.do(t, e.newJSONReq(t, http.MethodPost, "/api/config/restart", nil))
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("普通成员重启应 403，得到 %d %s", resp.StatusCode, body)
+	}
+}
+
+func TestPutConfigHotApplyAndRestart(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+
+	resp, body := e.do(t, e.newJSONReq(t, http.MethodPut, "/api/config", map[string]any{
+		"values": map[string]any{"max_text_bytes": 5, "listen": ":0"},
+	}))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("保存应成功，得到 %d %s", resp.StatusCode, body)
+	}
+	var res struct {
+		Changed         []string `json:"changed"`
+		Applied         []string `json:"applied"`
+		RestartRequired []string `json:"restart_required"`
+	}
+	if err := json.Unmarshal(body, &res); err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Applied) != 1 || res.Applied[0] != "max_text_bytes" {
+		t.Fatalf("applied 不对: %+v", res.Applied)
+	}
+	if len(res.RestartRequired) != 1 || res.RestartRequired[0] != "listen" {
+		t.Fatalf("restart_required 不对: %+v", res.RestartRequired)
+	}
+
+	if _, err := e.store.Create(store.CreateInput{Text: "0123456789"}); !errors.Is(err, store.ErrTextTooLong) {
+		t.Fatalf("max_text_bytes 未热更，得到 %v", err)
+	}
+
+	resp, body = e.do(t, e.newJSONReq(t, http.MethodGet, "/api/config", nil))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("读配置失败: %d %s", resp.StatusCode, body)
+	}
+	var got struct {
+		Origins map[string]string `json:"origins"`
+		Paths   map[string]string `json:"paths"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Origins["max_text_bytes"] != "web" || got.Paths["web_config"] == "" {
+		t.Fatalf("来源/路径不对: %+v", got)
+	}
+
+	resp, body = e.do(t, e.newJSONReq(t, http.MethodPost, "/api/config/restart", nil))
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("重启应 202，得到 %d %s", resp.StatusCode, body)
+	}
+	if *e.restarts != 1 {
+		t.Fatalf("Restart 钩子应调用一次，得到 %d", *e.restarts)
+	}
+	resp, body = e.do(t, e.newJSONReq(t, http.MethodPost, "/api/config/restart", nil))
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("冷却期内应 429，得到 %d %s", resp.StatusCode, body)
+	}
+}
+
+func TestPutConfigRejectsInvalid(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+
+	resp, body := e.do(t, e.newJSONReq(t, http.MethodPut, "/api/config", map[string]any{
+		"values": map[string]any{"max_files_per_item": 0},
+	}))
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("非法值应 400，得到 %d %s", resp.StatusCode, body)
+	}
+
+	resp, body = e.do(t, e.newJSONReq(t, http.MethodPut, "/api/config", map[string]any{
+		"values": map[string]any{"no_such_field": 1},
+	}))
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("未知字段应 400，得到 %d %s", resp.StatusCode, body)
 	}
 }

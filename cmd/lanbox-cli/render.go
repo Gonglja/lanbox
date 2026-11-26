@@ -7,6 +7,7 @@ import (
 	"text/tabwriter"
 
 	"lanbox/internal/client"
+	"lanbox/internal/mdns"
 )
 
 // summarize 把多行文本压成单行并截断到 40 字。
@@ -55,6 +56,42 @@ func renderFiles(w io.Writer, files []client.File) error {
 	fmt.Fprintln(tw, "FID\t路径\t大小\t下载")
 	for _, f := range files {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\n", f.ID, f.RelPath(), fmtBytes(f.Size), f.Downloads)
+	}
+	return tw.Flush()
+}
+
+// shortFP 返回指纹前 8 位。
+func shortFP(fp string) string {
+	if len(fp) <= 8 {
+		return fp
+	}
+	return fp[:8]
+}
+
+// renderServices 输出发现结果表格。
+func renderServices(w io.Writer, services []mdns.Service) error {
+	if len(services) == 0 {
+		fmt.Fprintln(w, "局域网内未发现 lanbox 实例")
+		return nil
+	}
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "实例\t地址\t版本\t主机名\t证书指纹")
+	for _, s := range services {
+		fp := "-"
+		if v := s.TXT["fp"]; v != "" {
+			fp = shortFP(v)
+		}
+		version := s.TXT["v"]
+		if version == "" {
+			version = "-"
+		}
+		host := s.Host
+		if host == "" {
+			host = "-"
+		} else {
+			host += ".local"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", s.Instance, urlOf(s), version, host, fp)
 	}
 	return tw.Flush()
 }

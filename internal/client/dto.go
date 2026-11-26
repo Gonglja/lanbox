@@ -62,6 +62,8 @@ type Session struct {
 	Username string    `json:"username"`
 	SID      string    `json:"sid"`
 	SavedAt  time.Time `json:"saved_at"`
+	// PinFP 是 mDNS 自动发现时固定的服务端证书指纹（sha256 hex，可空）。
+	PinFP string `json:"pin_fp,omitempty"`
 }
 
 // Error 是服务端返回的结构化错误。

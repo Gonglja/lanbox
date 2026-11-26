@@ -230,6 +230,13 @@ func (m *Manager) List() []*User {
 	return out
 }
 
+// SetSessionTTL 立即替换新会话与续期使用的有效期（热更）。
+func (m *Manager) SetSessionTTL(d time.Duration) {
+	m.mu.Lock()
+	m.ttl = d
+	m.mu.Unlock()
+}
+
 // NewSession 为已校验的用户创建会话令牌。
 func (m *Manager) NewSession(username string) (token string, expires time.Time, err error) {
 	m.mu.Lock()

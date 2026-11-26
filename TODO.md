@@ -8,5 +8,6 @@
 - [x] 4. 呈现设计并逐节确认
 - [x] 5. 写 spec 到 docs/superpowers/specs/2026-11-26-mdns-and-web-config-design.md
 - [x] 6. spec 自检（占位符/矛盾/歧义/范围）
-- [ ] 7. 用户审阅 spec
-- [ ] 8. 转入 writing-plans 写实现计划
+- [x] 7. 用户审阅 spec
+- [x] 8. 写实现计划 docs/superpowers/plans/2026-11-26-mdns-and-web-config.md
+- [x] 9. 执行实现计划（13 个任务全部完成并合并回 main）
