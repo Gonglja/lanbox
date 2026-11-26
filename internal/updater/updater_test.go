@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -245,4 +246,52 @@ func TestNewRequiresAsset(t *testing.T) {
 	if _, err := New(Options{}); err == nil {
 		t.Fatal("缺少 asset 应该报错")
 	}
+}
+
+func TestDynamicSource(t *testing.T) {
+	// 第一次指向「没有更新」的源，切换后立刻看到新版本。
+	old := releaseServerForTest(t, "v1.2.3", testSum)
+	next := releaseServerForTest(t, "v1.2.5", testSum)
+
+	var mu sync.Mutex
+	cur := old.URL
+	u := newTestUpdater(t, Options{
+		Current: "1.2.3",
+		Asset:   "lanbox-linux-amd64",
+		Source: func() Source {
+			mu.Lock()
+			defer mu.Unlock()
+			return Source{BaseURL: cur}
+		},
+	})
+	if _, err := u.Check(context.Background()); !errors.Is(err, ErrUpToDate) {
+		t.Fatalf("第一次应已是最新，得到 %v", err)
+	}
+	mu.Lock()
+	cur = next.URL
+	mu.Unlock()
+	rel, err := u.Check(context.Background())
+	if err != nil {
+		t.Fatalf("切换源后 Check: %v", err)
+	}
+	if rel.Version != "1.2.5" {
+		t.Fatalf("没读到新源: %+v", rel)
+	}
+}
+
+// releaseServerForTest 返回只带 SHA256SUMS 的假源（不依赖 download_test 的辅助函数）。
+func releaseServerForTest(t *testing.T, tag, sum string) *httptest.Server {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/releases/latest/download/SHA256SUMS":
+			http.Redirect(w, r, "/releases/download/"+tag+"/SHA256SUMS", http.StatusFound)
+		case "/releases/download/" + tag + "/SHA256SUMS":
+			fmt.Fprintf(w, "%s  lanbox-linux-amd64\n", sum)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(ts.Close)
+	return ts
 }

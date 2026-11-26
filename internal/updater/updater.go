@@ -35,6 +35,16 @@ type Options struct {
 	Token    string       // 私有仓库用，作为 Bearer token
 	Client   *http.Client // 可为 nil（默认带代理与 15s 超时）
 	Log      *log.Logger  // 可为 nil
+
+	// Source 非空时每次检查/下载都重新读取更新源，让网页改 update.url 立即生效。
+	Source func() Source
+}
+
+// Source 是一次请求使用的更新源（可随配置变化）。
+type Source struct {
+	BaseURL  string // github 模式基地址
+	Manifest string // 非空 = manifest 模式
+	Token    string
 }
 
 // Release 是一次检查得到的远端版本信息。
@@ -106,16 +116,29 @@ func AssetName(product, goos, goarch string) string {
 	return name
 }
 
+// source 返回本次请求使用的更新源。
+func (u *Updater) source() Source {
+	src := Source{BaseURL: u.opts.BaseURL, Manifest: u.opts.Manifest, Token: u.opts.Token}
+	if u.opts.Source != nil {
+		src = u.opts.Source()
+	}
+	if src.Manifest == "" && src.BaseURL == "" {
+		src.BaseURL = DefaultBaseURL
+	}
+	return src
+}
+
 // Check 查询远端最新版本。远端不比本机新时返回 (Release, ErrUpToDate)。
 func (u *Updater) Check(ctx context.Context) (Release, error) {
+	src := u.source()
 	var (
 		rel Release
 		err error
 	)
-	if u.opts.Manifest != "" {
-		rel, err = u.checkManifest(ctx)
+	if src.Manifest != "" {
+		rel, err = u.checkManifest(ctx, src)
 	} else {
-		rel, err = u.checkGitHub(ctx)
+		rel, err = u.checkGitHub(ctx, src)
 	}
 	if err != nil {
 		return rel, err
@@ -132,9 +155,10 @@ func (u *Updater) Check(ctx context.Context) (Release, error) {
 
 // checkGitHub 走静态下载路径：{base}/releases/latest/download/SHA256SUMS
 // 302 到 {base}/releases/download/<tag>/SHA256SUMS，从最终 URL 里拿 tag（零 API 调用）。
-func (u *Updater) checkGitHub(ctx context.Context) (Release, error) {
-	sumsURL := u.opts.BaseURL + "/releases/latest/download/SHA256SUMS"
-	body, final, err := u.get(ctx, sumsURL)
+func (u *Updater) checkGitHub(ctx context.Context, src Source) (Release, error) {
+	base := strings.TrimRight(src.BaseURL, "/")
+	sumsURL := base + "/releases/latest/download/SHA256SUMS"
+	body, final, err := u.get(ctx, src, sumsURL)
 	if err != nil {
 		return Release{}, failf("check", "获取 SHA256SUMS 失败: %w", err)
 	}
@@ -150,7 +174,7 @@ func (u *Updater) checkGitHub(ctx context.Context) (Release, error) {
 		Version:   normalizeVersion(tag),
 		Tag:       tag,
 		AssetName: u.opts.Asset,
-		AssetURL:  u.opts.BaseURL + "/releases/download/" + url.PathEscape(tag) + "/" + url.PathEscape(u.opts.Asset),
+		AssetURL:  base + "/releases/download/" + url.PathEscape(tag) + "/" + url.PathEscape(u.opts.Asset),
 		SHA256:    sum,
 	}, nil
 }
@@ -171,8 +195,8 @@ type manifestAsset struct {
 }
 
 // checkManifest 拉取 latest.json（适配 Gitea、内网静态站、镜像）。
-func (u *Updater) checkManifest(ctx context.Context) (Release, error) {
-	body, final, err := u.get(ctx, u.opts.Manifest)
+func (u *Updater) checkManifest(ctx context.Context, src Source) (Release, error) {
+	body, final, err := u.get(ctx, src, src.Manifest)
 	if err != nil {
 		return Release{}, failf("check", "获取更新清单失败: %w", err)
 	}
@@ -221,14 +245,14 @@ func (u *Updater) checkManifest(ctx context.Context) (Release, error) {
 }
 
 // get 发 GET 请求（带 token），返回 body 与最终 URL（跟随重定向之后）。
-func (u *Updater) get(ctx context.Context, rawURL string) ([]byte, *url.URL, error) {
+func (u *Updater) get(ctx context.Context, src Source, rawURL string) ([]byte, *url.URL, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, nil, err
 	}
 	req.Header.Set("User-Agent", "lanbox-updater/"+u.cur.String())
-	if u.opts.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+u.opts.Token)
+	if src.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+src.Token)
 	}
 	resp, err := u.http.Do(req)
 	if err != nil {

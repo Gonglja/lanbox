@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"lanbox/internal/config"
 )
 
 // newTestApp 在临时目录里装配一个只监听回环的实例。
@@ -159,5 +161,36 @@ func TestRingKeepsLastLines(t *testing.T) {
 	}
 	if got := r.String(); got != "b\nc\nd" {
 		t.Fatalf("环形缓冲不对: %q", got)
+	}
+}
+
+func TestUpdateSource(t *testing.T) {
+	cases := []struct {
+		url      string
+		manifest string
+		base     string
+	}{
+		{"", "", ""},
+		{"https://github.com/Gonglja/lanbox", "", "https://github.com/Gonglja/lanbox"},
+		{"https://example.com/up/latest.json", "https://example.com/up/latest.json", ""},
+		{" https://example.com/LATEST.JSON ", "https://example.com/LATEST.JSON", ""},
+	}
+	for _, c := range cases {
+		src := updateSource(config.Update{URL: c.url, Token: "tok"})
+		if src.Manifest != c.manifest || src.BaseURL != c.base || src.Token != "tok" {
+			t.Fatalf("updateSource(%q) = %+v", c.url, src)
+		}
+	}
+}
+
+func TestBuildUpdater(t *testing.T) {
+	logger := log.New(io.Discard, "", 0)
+	m := buildUpdater("1.2.3", func() {}, logger, func() config.Update { return config.Update{} })
+	if m == nil {
+		t.Fatal("正常情况下应该能构造更新管理器")
+	}
+	st := m.State()
+	if !st.Supported || st.Current != "1.2.3" {
+		t.Fatalf("状态不对: %+v", st)
 	}
 }

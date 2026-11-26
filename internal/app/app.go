@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +28,7 @@ import (
 	"lanbox/internal/httpapi"
 	"lanbox/internal/store"
 	"lanbox/internal/tlsutil"
+	"lanbox/internal/updater"
 )
 
 // 错误。
@@ -37,16 +39,19 @@ var (
 
 // Options 是装配 App 所需的输入。
 type Options struct {
-	CfgPath string    // config.json 路径（可以不存在）
-	Web     fs.FS     // 内嵌前端资源（lanbox.WebFS()）
-	Version string    // 版本号，只用于展示
-	Log     *log.Logger // 可为 nil：日志只进环形缓冲
-	Locked  map[string]string // App 固定字段，如 listen/data_dir（桌面端留空）
-	AllowLoopbackLogin bool // 是否启用回环引导登录（只有 Android 打开）
+	CfgPath            string            // config.json 路径（可以不存在）
+	Web                fs.FS             // 内嵌前端资源（lanbox.WebFS()）
+	Version            string            // 版本号，只用于展示
+	Log                *log.Logger       // 可为 nil：日志只进环形缓冲
+	Locked             map[string]string // App 固定字段，如 listen/data_dir（桌面端留空）
+	AllowLoopbackLogin bool              // 是否启用回环引导登录（只有 Android 打开）
 	// LanIPs 是宿主额外告知的局域网地址。Android 上 SELinux 禁止 netlink，
 	// Go 的 InterfaceAddrs() 只能看到回环，所以由 Kotlin 读 WiFi IPv4 传进来。
-	LanIPs []string
-	OnRestart func()  // nil 表示宿主不支持进程自重启（Android）
+	LanIPs    []string
+	OnRestart func() // nil 表示宿主不支持进程自重启（Android）
+	// EnableUpdate 打开在线更新（桌面端与服务端传 true；Android 不传）。
+	// 只有同时给了 OnRestart 才允许真正升级。
+	EnableUpdate bool
 }
 
 // Info 是运行期对外信息快照。
@@ -85,6 +90,11 @@ type App struct {
 	mu       sync.Mutex
 	running  bool
 	serveErr chan error
+
+	// 在线更新：update 为 nil 表示不支持。
+	update       *updater.Manager
+	updateMu     sync.Mutex
+	updateCancel context.CancelFunc
 
 	// infoCache 给 Info() 加 3 秒缓存：Android 上每 1.5 秒刷新界面会反复枚举网卡，
 	// 触发 SELinux 的 netlink 拒绝日志（不影响功能，但会刷屏）。
@@ -130,6 +140,16 @@ func New(opts Options) (*App, error) {
 			}
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	// 更新源的 URL / 令牌每次请求时从当前配置读取，网页改完立即生效。
+	if opts.EnableUpdate {
+		a.update = buildUpdater(opts.Version, opts.OnRestart, a.log, func() config.Update {
+			return live.Current().Update
+		})
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -192,6 +212,12 @@ func New(opts Options) (*App, error) {
 		LoopbackToken:      a.loopbackToken,
 		RestartDisabled:    opts.OnRestart == nil,
 		IfaceAddrs:         a.localIPs,
+		Update: func() httpapi.UpdateManager {
+			if a.update == nil {
+				return nil
+			}
+			return a.update
+		},
 	})
 	return a, nil
 }
@@ -259,6 +285,7 @@ func (a *App) Start() error {
 	}()
 	a.invalidateInfo()
 	a.log.Printf("info: 监听 %s（HTTPS）", cfg.Listen)
+	a.startUpdateChecks(cfg)
 	return nil
 }
 
@@ -274,6 +301,7 @@ func (a *App) Shutdown() error {
 	a.httpSrv, a.ln = nil, nil
 	a.mu.Unlock()
 
+	a.stopUpdateChecks()
 	if mdnsRunner != nil {
 		mdnsRunner.Close()
 	}
@@ -423,5 +451,66 @@ func storeOpts(cfg config.Config) store.Options {
 		MaxTextBytes: cfg.MaxTextBytes,
 		MaxFiles:     cfg.MaxFilesPerItem,
 		MaxItemBytes: cfg.MaxItemBytes(),
+	}
+}
+
+// buildUpdater 构造更新管理器；拿不到自身路径或参数不合法时返回 nil（功能关闭）。
+func buildUpdater(version string, restart func(), logger *log.Logger, source func() config.Update) *updater.Manager {
+	exe, err := os.Executable()
+	if err != nil {
+		logger.Printf("warn: 拿不到自身路径，在线更新已关闭: %v", err)
+		return nil
+	}
+	up, err := updater.New(updater.Options{
+		Current: version,
+		Asset:   updater.AssetName("lanbox", runtime.GOOS, runtime.GOARCH),
+		Source:  func() updater.Source { return updateSource(source()) },
+		Log:     logger,
+	})
+	if err != nil {
+		logger.Printf("warn: 初始化在线更新失败: %v", err)
+		return nil
+	}
+	return updater.NewManager(updater.ManagerOptions{
+		Updater: up,
+		ExePath: exe,
+		Restart: restart,
+		Log:     logger,
+	})
+}
+
+// updateSource 把配置里的 update.url 解释成 github 模式或清单模式。
+func updateSource(c config.Update) updater.Source {
+	src := updater.Source{Token: c.Token}
+	u := strings.TrimSpace(c.URL)
+	if strings.HasSuffix(strings.ToLower(u), ".json") {
+		src.Manifest = u
+	} else {
+		src.BaseURL = u
+	}
+	return src
+}
+
+// startUpdateChecks 按配置启动后台检查（先停掉旧的）。
+func (a *App) startUpdateChecks(cfg config.Config) {
+	if a.update == nil {
+		return
+	}
+	a.stopUpdateChecks()
+	ctx, cancel := context.WithCancel(context.Background())
+	a.updateMu.Lock()
+	a.updateCancel = cancel
+	a.updateMu.Unlock()
+	a.update.Run(ctx, cfg.Update.Check)
+}
+
+// stopUpdateChecks 停止后台检查（可重复调用）。
+func (a *App) stopUpdateChecks() {
+	a.updateMu.Lock()
+	cancel := a.updateCancel
+	a.updateCancel = nil
+	a.updateMu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
 }

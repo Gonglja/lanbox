@@ -60,8 +60,8 @@ func (u *Updater) Download(ctx context.Context, dir string, r Release, progress 
 		return "", failf("download", "%v", err)
 	}
 	req.Header.Set("User-Agent", "lanbox-updater/"+u.cur.String())
-	if u.opts.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+u.opts.Token)
+	if tok := u.source().Token; tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	resp, err := u.http.Do(req)
 	if err != nil {
