@@ -125,32 +125,32 @@ jobs:
             android/**/*.gradle*
             android/gradle/wrapper/gradle-wrapper.properties
 
-      - name: 安装 Android 命令行工具（提供 sdkmanager）
-        uses: android-actions/setup-android@v3
-
-      - name: 安装 platform 35 / build-tools / NDK
+      - name: 安装 Android cmdline-tools + platform 35 + build-tools + NDK
+        # 不用第三方 action：镜像里没有 sdkmanager 在 PATH 上，自己下 cmdline-tools 最可控。
         run: |
           set -euo pipefail
-          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          id; ls "$ANDROID_SDK_ROOT"
-          # 镜像里的 SDK 目录常属于 root，sdkmanager 写不进去
-          sudo chown -R "$(id -u):$(id -g)" "$ANDROID_SDK_ROOT" 2>/dev/null || true
-          SDKMAN="$(command -v sdkmanager || true)"
-          if [ -z "$SDKMAN" ]; then SDKMAN="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"; fi
-          echo "SDKMAN=$SDKMAN"
-          # 环境概况打成 warning：日志要登录才能看，annotation 是公开的
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/android-sdk}}"
+          mkdir -p "$SDK/cmdline-tools"
+          echo "::warning title=sdk::SDK=$SDK"
+          if [ ! -x "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
+            curl -fsSL -o /tmp/cmdline-tools.zip               https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip               || { echo "::error::下载 cmdline-tools 失败"; exit 1; }
+            rm -rf /tmp/cmdline-tools "$SDK/cmdline-tools/latest"
+            unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools
+            mv /tmp/cmdline-tools/cmdline-tools "$SDK/cmdline-tools/latest"
+          fi
+          SDKMAN="$SDK/cmdline-tools/latest/bin/sdkmanager"
           echo "::warning title=sdk::SDKMAN=$SDKMAN"
-          echo "::warning title=sdk::sdk=$(ls "$ANDROID_SDK_ROOT" | paste -sd' ' -)"
-          echo "::warning title=sdk::platforms=$(ls "$ANDROID_SDK_ROOT/platforms" 2>/dev/null | paste -sd' ' -)"
-          echo "::warning title=sdk::ndk=$(ls "$ANDROID_SDK_ROOT/ndk" 2>/dev/null | paste -sd' ' -)"
-          yes | "$SDKMAN" --licenses >/dev/null 2>&1 || true
-          if ! "$SDKMAN" --install "platforms;android-35" "build-tools;35.0.0" "ndk;${NDK_VERSION}" > /tmp/sdk.log 2>&1; then
-            tail -12 /tmp/sdk.log | while IFS= read -r l; do echo "::error title=sdkmanager::$(printf '%s' "$l" | cut -c1-350)"; done
+          yes | "$SDKMAN" --sdk_root="$SDK" --licenses >/dev/null 2>&1 || true
+          if ! "$SDKMAN" --sdk_root="$SDK" --install                  "platforms;android-35" "build-tools;35.0.0" "ndk;${NDK_VERSION}" > /tmp/sdk.log 2>&1; then
+            tail -15 /tmp/sdk.log | while IFS= read -r l; do echo "::error title=sdkmanager::$(printf '%s' "$l" | cut -c1-350)"; done
             exit 1
           fi
-          ls "$ANDROID_SDK_ROOT/ndk"
-          echo "::notice::Android SDK 就绪: $ANDROID_SDK_ROOT"
+          echo "::warning title=sdk::ndk=$(ls "$SDK/ndk" | paste -sd' ' -)"
+          {
+            echo "ANDROID_SDK_ROOT=$SDK"
+            echo "ANDROID_HOME=$SDK"
+          } >> "$GITHUB_ENV"
+          echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
 
       - name: 写签名配置（配了 secrets 才用正式签名）
         env:
