@@ -132,7 +132,7 @@ type File struct {
 ### 6.1 命令面
 
 ```
-lanbox-cli [-s URL] [--json] [-insecure] [-ca FILE] [-v] <command> [args]
+lanbox-cli [-s URL] [--json] [-insecure] [-ca FILE] <command> [args]
 ```
 
 | 命令 | 用法 | 说明 |
@@ -167,10 +167,10 @@ lanbox-cli [-s URL] [--json] [-insecure] [-ca FILE] [-v] <command> [args]
 ### 6.4 下载细节
 
 - 无附件、纯文本内容 → 只打印文本到 stdout（`--json` 除外），不写文件。
-- 单附件：写到 `<DIR>/<basename>`（`DIR` 默认当前目录）。
+- 单附件：路径里没有目录时直接落到 `<DIR>/<basename>`；带目录时按相对路径还原。
 - 多附件/含目录：`<DIR>/<relPath>`，自动 `MkdirAll(0750)`。
-- 已存在：默认**跳过并打印**（`跳过已存在：x`），`--force` 覆盖。目录冲突（要写文件处已是目录或反之）→ 报错并列出。
-- `--resume`：仅单附件；本地已有文件时发 `Range: bytes=<size>-`，206 追加，200 重新开始；结束校验 sha256。
+- 目标已存在：默认**跳过并提示**（提示写 stderr），`--force` 覆盖——`--resume` 不会绕过这条规则。
+- `--resume`：仅单附件；从同目录的 `<dest>.part` 已有字节发 `Range` 续传，结束后校验 sha256 并 rename。
 - 写入使用 `<name>.part` 临时文件，sha256 校验通过后 `rename` 成目标名；校验失败删除临时文件、报错、退出码 1。
 - `--zip FILE`：直接 `GET .../zip` 存为文件，**不自动解压**；与 `--resume` 互斥（用法错误）。
 

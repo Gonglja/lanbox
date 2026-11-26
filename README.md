@@ -13,7 +13,7 @@
 ## 快速开始
 
 ```bash
-# 1. 编译本机架构（需要 Go 1.24+，仅标准库）
+# 1. 编译本机架构（需要 Go 1.25+，仅标准库）
 make build          # 等价于 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=..." -o lanbox ./cmd/lanbox
 
 # 2. 直接运行（默认监听 :8443，数据在 ./data）
@@ -40,7 +40,7 @@ lanbox-cli put -r ./素材 -m "素材目录"      # 目录必须显式 -r
 # 查看与取回
 lanbox-cli ls -n 20
 lanbox-cli files <ID>
-lanbox-cli get <ID> -o ./收件               # 按相对路径还原目录
+lanbox-cli get <ID> -o ./收件               # 按相对路径还原目录（单附件无目录时直接落到 basename）
 lanbox-cli get <ID> --zip ./all.zip         # 整条内容打包（已存在需 --force）
 lanbox-cli get <ID> --resume -o .           # 单文件断点续传
 
@@ -111,7 +111,7 @@ make dist     # 产出 dist/ 下 8 个静态二进制（服务端 + CLI 各 4 �
 | `listen` | `:8443` | 监听地址。只对某一网卡开放可写 `192.168.1.9:8443` |
 | `data_dir` | `./data` | 数据目录（内容、用户库、证书） |
 | `tls.cert_file` / `tls.key_file` | 空 | 同时填写则使用你自己的证书；留空则自动生成自签证书 |
-| `max_file_size_mb` | 1024 | 单文件上限，超出返回 413 |
+| `max_file_size_mb` | 1024 | 单文件上限；实际生效的是 `min(单文件上限, 单条剩余额度)`，超过单条额度返回 `item_too_large`(413) |
 | `max_item_size_mb` | 2048 | 单条内容附件总大小上限，超出返回 413 |
 | `max_files_per_item` | 500 | 单条内容附件数量上限（1..10000，目录上传会用到） |
 | `min_free_disk_mb` | 1024 | 剩余磁盘保护线，低于此值拒绝上传（507） |

@@ -4115,3 +4115,6 @@ git commit -m "build: 交叉编译 CLI，README 补充客户端与目录传输�
 | 移除 `-v` | 只解析未实现，属空功能 | `cmd/lanbox-cli/main.go` |
 | 「超过 500 个文件」提示并入 `refreshPending` | 单独调用会被 `refreshPending` 覆盖，成死代码 | `web/main.js` |
 | 网页端待上传列表显示 `relPath` | 否则同名文件无法区分 | `web/main.js` |
+| 单附件带目录时不再压平为 basename | 与「按相对路径还原目录」的承诺矛盾 | `cmd/lanbox-cli/cmd_get.go` |
+| `--resume` 不再绕过「目标已存在」检查 | 会静默覆盖用户已有文件 | `internal/client/get.go` + 回归用例 |
+| 上传进度把文本字节计入 sent | 带 `-m` 时进度永远停在 99% | `internal/client/put.go` |
