@@ -1,7 +1,10 @@
 data/
 /lanbox
 /lanbox-cli
+/lanbox-agent
+/lanbox-agent.exe
 /dist/
 *.test
+*.exe~
 *.out
 config.json

@@ -3,8 +3,8 @@
   Build the lanbox Windows executables.
 
 .DESCRIPTION
-  Cross-compiles (or natively builds) the lanbox server and CLI for Windows
-  amd64 / arm64 into dist\, using the same file names as `make dist`.
+  Cross-compiles (or natively builds) the lanbox server, CLI and desktop agent
+  for Windows amd64 / arm64 into dist\, using the same file names as `make dist`.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File build-windows.ps1
@@ -16,7 +16,8 @@ param(
   [ValidateSet("amd64", "arm64", "all")]
   [string]$Arch = "all",
   [string]$OutDir = "dist",
-  [switch]$NoTrim
+  [switch]$NoTrim,
+  [switch]$NoAgent
 )
 
 $ErrorActionPreference = "Stop"
@@ -28,11 +29,16 @@ if ($Version -eq "dev") {
   if ($LASTEXITCODE -eq 0 -and $described) { $Version = $described.Trim() }
 }
 
+$ldflags = "-s -w -X main.version=$Version"
 $arches = if ($Arch -eq "all") { @("amd64", "arm64") } else { @($Arch) }
 $targets = @(
-  @{ Name = "lanbox"; Pkg = "./cmd/lanbox" },
-  @{ Name = "lanbox-cli"; Pkg = "./cmd/lanbox-cli" }
+  @{ Name = "lanbox"; Pkg = "./cmd/lanbox"; Tags = ""; LdFlags = $ldflags },
+  @{ Name = "lanbox-cli"; Pkg = "./cmd/lanbox-cli"; Tags = ""; LdFlags = $ldflags }
 )
+if (-not $NoAgent) {
+  # Wails GUI: needs the desktop,production tags and -H windowsgui (no console).
+  $targets += @{ Name = "lanbox-agent"; Pkg = "./cmd/lanbox-agent"; Tags = "desktop,production"; LdFlags = "$ldflags -H=windowsgui" }
+}
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
@@ -40,7 +46,6 @@ New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 # shell feature that cmd.exe does not support.
 $env:CGO_ENABLED = "0"
 $env:GOOS = "windows"
-$ldflags = "-s -w -X main.version=$Version"
 $goFlags = @()
 if (-not $NoTrim) { $goFlags += "-trimpath" }
 
@@ -50,7 +55,9 @@ foreach ($a in $arches) {
   foreach ($t in $targets) {
     $out = Join-Path $OutDir ("{0}-windows-{1}.exe" -f $t.Name, $a)
     Write-Host "==> $out  (windows/$a)"
-    & go build @goFlags -ldflags $ldflags -o $out $t.Pkg
+    $tags = @()
+    if ($t.Tags) { $tags = @("-tags", $t.Tags) }
+    & go build @tags @goFlags -ldflags $t.LdFlags -o $out $t.Pkg
     if ($LASTEXITCODE -ne 0) { throw "build failed: $out" }
     $built += Get-Item $out
   }

@@ -2,7 +2,7 @@
 
 一个跑在 Linux 小主机上的**文件与消息共享服务**：任一端打开网页发布文字和文件，另一端打开同一个网页取走，反之亦然。两端权限对等，都能发布、查看、下载、标记已取走、删除。
 
-- 单个静态二进制，**零第三方依赖**，无需 Docker、数据库、Node
+- 单个静态二进制，**服务端与 CLI 零第三方依赖**（`go.sum` 里的依赖只用于 Windows 客户端），无需 Docker、数据库、Node
 - HTTPS 单端口，未配置证书时自动生成自签证书
 - 每条内容标注**发布者与来源 IP**
 - 附件流式落盘（内存占用与文件大小无关），支持 Range 断点下载
@@ -62,6 +62,51 @@ lanbox-cli logout
 - 会话保存在 `~/.config/lanbox/session.json`（0600，可用 `XDG_CONFIG_HOME` 改位置；Windows 上是 `%AppData%\lanbox\session.json`）。**会话不保存 TLS 选项**，所以每条命令都要重复 `-ca`/`-insecure`；也可以把 `data/tls/cert.pem` 导入系统信任库，之后就不必再传。
 - 全局选项可写在子命令前后：`lanbox-cli -s https://host ls` 等价于 `lanbox-cli ls -s https://host`（非默认端口写 `https://host:8443`）。
 
+## Windows 客户端 lanbox-agent
+
+桌面端常驻程序：托盘图标 + 独立窗口，**剪贴板自动上传**，不用每次开浏览器。
+
+- **mDNS 发现**：「发现局域网服务器」列出实例与证书指纹，选中即按 TXT `fp=` 固定证书；手填地址时可先「获取证书指纹」再勾选信任
+- **剪贴板自动上传**：文本（`CF_UNICODETEXT`）、资源管理器复制的文件/文件夹（`CF_HDROP`）、截图（`CF_DIB`→PNG），三类各有独立开关
+- **手动发送**：窗口内输入消息、选文件、选文件夹，或把文件/文件夹直接拖进窗口
+- **可暂停/可关闭**：暂停状态持久化；关闭监听时完全不读取剪贴板
+- **主题与 Web UI 一致**：顶栏调色板图标可选「跟随系统 / 亮色 / 暗色 / 纸张」，同一套设计令牌与 `lanbox.theme` 键
+- **固定窗口**：456×720，标题栏只有最小化与关闭（不可拖动缩放）
+- **托盘常驻**：关闭窗口默认最小化到托盘（剪贴板继续工作），托盘菜单可打开窗口 / 暂停 / 立即上传剪贴板 / 退出；图标用颜色表示状态（绿=监听中、黄=暂停、红=未登录）
+- **会话与 CLI 共用**：`%AppData%\lanbox\session.json` 双向兼容，CLI 登录过就直接复用；首次从 CLI 会话恢复时会固定当时的证书指纹（TOFU）
+
+配置在 `%AppData%\lanbox\agent.json`（客户端设置页可改），日志在 `%AppData%\lanbox\agent.log`（2MB × 2 轮转，记录了每次跳过剪贴板的原因）。密码用 Windows DPAPI（当前用户作用域）加密保存，可在设置里关掉「记住密码」。
+
+| 配置项 | 默认 | 说明 |
+|---|---|---|
+| `clipboard.enabled` | `true` | 总开关 |
+| `clipboard.paused` | `false` | 暂停（重启保持） |
+| `clipboard.text` / `.files` / `.images` | `true` / `true` / `false` | 三类独立开关 |
+| `clipboard.dedupe_seconds` | `30` | 去重窗口，0 = 不去重 |
+| `clipboard.max_text_bytes` | `1048576` | 文本上限 |
+| `clipboard.max_image_mb` | `5` | 图片上限 |
+| `clipboard.max_total_mb` / `.max_files` | `2048` / `500` | 单条附件总量/数量上限 |
+| `clipboard.text_prefix` | 空 | 自动上传时附加的说明前缀（留空=原样上传） |
+| `app.autostart` | `false` | 开机自启（`HKCU\...\Run`） |
+| `app.close_to_tray` | `true` | 关闭窗口=隐藏到托盘 |
+| `app.history_size` | `50` | 窗口内保留的本机记录条数（内存，重启清空） |
+| `app.remember_password` | `true` | DPAPI 保存密码，会话过期自动重登 |
+
+剪贴板决策顺序（前一条命中即停止）：总开关/暂停/未登录 → 带 `Clipboard Viewer Ignore` 格式（密码管理器）→ 300ms 去抖 → 有文件就按文件传（不再把文件名当文本）→ 去重窗口 → 文本/图片上限 → 文件存在性与数量/总量上限（文件夹递归、不跟随符号链接）。
+
+上传失败：网络错误退避重试 3 次（2s/10s/30s）；`401/403` 自动用保存的密码重登一次；`413`/`507`/证书错误不重试，直接显示服务端原因。成功记录可「撤回」（同时删除服务端内容）。
+
+构建：
+
+```bash
+make agent     # 本机（Windows）产出 ./lanbox-agent.exe
+make windows   # 产出 dist/lanbox-agent-windows-{amd64,arm64}.exe
+```
+
+依赖 `github.com/wailsapp/wails/v2@v2.10.2`（Windows 上无 CGO）与 `fyne.io/systray`，需要 WebView2 运行时（Win11 自带，Win10 一般随 Edge 安装）。首次 `go mod download` 若访问 proxy.golang.org 超时，可临时用 `GOPROXY=https://goproxy.cn,direct`。
+
+限制：仅 Windows 10 1803+ / Windows 11；本机历史只存在内存；图片自动上传默认关闭（截图噪声大）。
+
 ## 交叉编译
 
 ```bash
@@ -75,7 +120,9 @@ make dist     # 产出 dist/ 下 12 个静态二进制（Linux + Windows，服�
 | `dist/lanbox-linux-armv7` | ARMv7 32 位（树莓派 2/3 32 位系统、N1、老路由器） |
 | `dist/lanbox-linux-386` | x86 32 位（老 Atom 机器） |
 | `dist/lanbox-windows-amd64.exe` | Windows x64（Win10/11、Server 2016+） |
+| `dist/lanbox-agent-windows-amd64.exe` | Windows 客户端（托盘 + 剪贴板上传，x64） |
 | `dist/lanbox-windows-arm64.exe` | Windows on ARM |
+| `dist/lanbox-agent-windows-arm64.exe` | Windows 客户端（ARM64） |
 
 `lanbox-cli-*` 是配套的命令行客户端，平台与本表一致（Windows 版同样带 `.exe`）。
 
@@ -86,7 +133,8 @@ make dist     # 产出 dist/ 下 12 个静态二进制（Linux + Windows，服�
 | 命令 | 作用 |
 |---|---|
 | `make build` | 只编本机架构到 `./lanbox` 与 `./lanbox-cli`（Windows 上自动带 `.exe`） |
-| `make windows` | 只编 Windows 的 4 个产物（amd64/arm64 × 服务端/CLI） |
+| `make agent` | 只编 Windows 客户端 `./lanbox-agent.exe` |
+| `make windows` | 只编 Windows 的 6 个产物（amd64/arm64 × 服务端/CLI/客户端） |
 | `make test` | 跑全部测试 |
 | `make check` | 提交前自检：gofmt + go vet + test |
 | `make run` | 前台运行（读 `./config.json`） |

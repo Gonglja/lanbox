@@ -3,8 +3,9 @@
 #   make            等价于 make dist（全部平台的静态二进制 + 校验和）
 #   make build      只编本机架构
 #   make dist       交叉编译 linux/amd64、linux/arm64、linux/armv7、linux/386
-#                   同时产出 CLI（lanbox-cli），与服务端同一批平台
-#   make windows    只编 Windows 的 exe（amd64/arm64，服务端 + CLI）
+#                   同时产出 CLI（lanbox-cli）与 Windows 客户端（lanbox-agent）
+#   make windows    只编 Windows 的 exe（amd64/arm64，服务端 + CLI + 客户端）
+#   make agent      只编 Windows 客户端（lanbox-agent，含托盘与剪贴板监听）
 #   make test       跑全部测试
 #   make check      gofmt + go vet + test（提交前自检）
 #   make clean      清掉 dist/ 与本机二进制
@@ -15,6 +16,11 @@ APP      := lanbox
 CMD      := ./cmd/lanbox
 CLI      := lanbox-cli
 CLI_CMD  := ./cmd/lanbox-cli
+AGENT    := lanbox-agent
+AGENT_CMD := ./cmd/lanbox-agent
+# Wails 需要 desktop,production 标签；GUI 程序用 -H windowsgui 不带控制台窗口。
+AGENT_TAGS := desktop,production
+AGENT_LDFLAGS = $(LDFLAGS) -H=windowsgui
 DIST     := dist
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 GOFLAGS  := -trimpath
@@ -35,7 +41,7 @@ endif
 
 PREFIX ?= /usr/local
 
-.PHONY: all build dist windows checksums test vet fmt check run install clean help
+.PHONY: all build dist windows agent checksums test vet fmt check run install clean help
 
 all: dist
 
@@ -67,7 +73,7 @@ dist:
 	@$(MAKE) --no-print-directory windows
 	@$(MAKE) --no-print-directory checksums
 
-## windows: 交叉编译 Windows exe（amd64/arm64，服务端 + CLI）
+## windows: 交叉编译 Windows exe（amd64/arm64，服务端 + CLI + 客户端）
 ## 在 Windows 上（没有 POSIX shell）请改用：powershell -ExecutionPolicy Bypass -File build-windows.ps1
 windows:
 	@mkdir -p $(DIST)
@@ -81,7 +87,22 @@ windows:
 			go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST)/$$name $(CMD); \
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch \
 			go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST)/$(CLI)-$$os-$$arch.exe $(CLI_CMD); \
+		echo "==> $(AGENT)-$$os-$$arch.exe  ($$os/$$arch, GUI)"; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch \
+			go build -tags $(AGENT_TAGS) $(GOFLAGS) -ldflags "$(AGENT_LDFLAGS)" \
+				-o $(DIST)/$(AGENT)-$$os-$$arch.exe $(AGENT_CMD); \
 	done
+
+## agent: 编译本机的 Windows 客户端（lanbox-agent.exe，托盘 + 剪贴板监听）
+agent:
+ifeq ($(HOST_OS),windows)
+	CGO_ENABLED=0 go build -tags $(AGENT_TAGS) $(GOFLAGS) \
+		-ldflags "$(AGENT_LDFLAGS)" -o $(AGENT)$(EXE) $(AGENT_CMD)
+	@echo "已生成 ./$(AGENT)$(EXE)（版本 $(VERSION)）"
+else
+	@echo "lanbox-agent 只能在 Windows 上运行；交叉编译请用 make windows" >&2
+	@exit 1
+endif
 
 ## checksums: 生成并打印 dist/SHA256SUMS
 checksums:
@@ -119,7 +140,7 @@ install: build
 
 ## clean: 清理构建产物
 clean:
-	rm -rf $(DIST) $(APP) $(CLI) $(APP).exe $(CLI).exe
+	rm -rf $(DIST) $(APP) $(CLI) $(AGENT) $(APP).exe $(CLI).exe $(AGENT).exe
 
 ## help: 列出可用目标
 help:
