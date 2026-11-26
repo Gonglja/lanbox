@@ -99,24 +99,58 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	if err != nil {
+		return printAndCode(err, stderr)
+	}
+	return exitOK
+}
+
+// exitCode 把错误映射为退出码，便于单测与统一语义。
+func exitCode(err error) int {
+	if err == nil {
+		return exitOK
+	}
+	if errors.Is(err, errUsage) {
+		return exitUsage
+	}
+	if errors.Is(err, errAuth) {
+		return exitAuth
+	}
+	var ae *client.Error
+	if errors.As(err, &ae) {
+		switch ae.Status {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return exitAuth
+		}
+		return exitFail
+	}
+	var ua x509.UnknownAuthorityError
+	if errors.As(err, &ua) {
+		return exitNetwork
+	}
+	if isNetworkErr(err) {
+		return exitNetwork
+	}
+	return exitFail
+}
+
+// printAndCode 打印错误（必要时附上解决办法）并返回对应退出码。
+func printAndCode(err error, stderr io.Writer) int {
+	if err != nil {
 		fmt.Fprintln(stderr, "错误:", err)
 		var ae *client.Error
 		if errors.As(err, &ae) && ae.Status == http.StatusUnauthorized {
 			fmt.Fprintln(stderr, "提示: 会话已失效，请重新运行 lanbox-cli login")
-			return exitAuth
 		}
-		if errors.Is(err, errUsage) {
-			return exitUsage
+		var ua x509.UnknownAuthorityError
+		if errors.As(err, &ua) {
+			fmt.Fprint(stderr, `提示: 自签证书未被信任。三种办法：
+  1) 用 -ca <cert.pem> 指定服务端证书
+  2) 把 cert.pem 导入系统信任库
+  3) 加 -insecure 临时跳过校验（不安全）
+`)
 		}
-		if errors.Is(err, errAuth) {
-			return exitAuth
-		}
-		if isNetworkErr(err) {
-			return exitNetwork
-		}
-		return exitFail
 	}
-	return exitOK
+	return exitCode(err)
 }
 
 // globalFS 建立注册了全部全局选项的 FlagSet。

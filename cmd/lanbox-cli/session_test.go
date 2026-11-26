@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,5 +73,59 @@ func TestHTTPClientInsecureAndCA(t *testing.T) {
 	}
 	if _, err := httpClient(&globals{stderr: &errBuf, caFile: bad}); err == nil {
 		t.Fatal("非法 PEM 应报错")
+	}
+}
+
+// TestSaveSessionTightensExistingDir 断言已存在的 0755 配置目录会被收紧为 0700。
+func TestSaveSessionTightensExistingDir(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	cfg := filepath.Join(dir, "lanbox")
+	if err := os.MkdirAll(cfg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(cfg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveSession(&client.Session{URL: "https://x:8443", Username: "u", SID: "s"}); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode().Perm() != 0o700 {
+		t.Fatalf("已存在的配置目录应被收紧为 0700，得到 %o", st.Mode().Perm())
+	}
+}
+
+// TestSaveSessionIsAtomic 断言会话文件通过临时文件 rename 写入，不残留 .tmp。
+func TestSaveSessionIsAtomic(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	if err := saveSession(&client.Session{URL: "https://x:8443", Username: "u", SID: "s1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveSession(&client.Session{URL: "https://x:8443", Username: "u", SID: "s2"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "lanbox", "session.json.tmp")); !os.IsNotExist(err) {
+		t.Fatal("临时文件应已被 rename，不应残留")
+	}
+	got, err := loadSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SID != "s2" {
+		t.Fatalf("应读到新会话，得到 %q", got.SID)
+	}
+}
+
+// TestLoadSessionMissingIsAuthError 断言缺少会话文件属于认证问题。
+func TestLoadSessionMissingIsAuthError(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	_, err := loadSession()
+	if !errors.Is(err, errAuth) {
+		t.Fatalf("应返回 errAuth，得到 %v", err)
 	}
 }
