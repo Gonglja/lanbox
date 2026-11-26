@@ -26,7 +26,7 @@
 | 7 | 分发 | **自签 APK 侧载** + SHA256 | 免开发者账号；常驻前台服务 + 自签证书不适合上架 |
 | 8 | 包名 | `top.glj0.lanbox` | 用户指定 |
 | 9 | UI 技术 | **XML 布局 + AppCompat，不引 Compose** | 只有一屏表单；构建可复现、APK 小 |
-| 10 | Go 集成 | **gomobile bind → AAR** | Kotlin 直接调 Go；比手写 JNI 少一个数量级的胶水代码 |
+| 10 | Go 集成 | **`-buildmode=c-shared` + 手写 JNI** | gomobile（2026 版）强制把 `golang.org/x/mobile` 写进 `go.mod` 并把 `go` 指令抬到 1.26；c-shared 只要 NDK，`go.mod` 保持零改动 |
 
 技术选型否决记录：
 
@@ -34,7 +34,7 @@
 |---|---|
 | 纯 Kotlin 重写服务端 | 与现有 Go 实现分叉，双份行为要同步维护 |
 | Termux + linux-arm64 二进制 | 用户要求「App」，不是「装个终端」；443/8443、保活、开机自启都靠用户折腾 |
-| `-buildmode=c-shared` + 手写 JNI | 等价功能，但符号表/生命周期/线程挂接全要自己写，收益仅是少一个构建工具 |
+| gomobile bind | 会强制 `go.mod` 增加 `tool golang.org/x/mobile/cmd/gobind` 并升级 `go` 指令到 1.26，与本仓库「Go 1.25 + 零第三方依赖」冲突 |
 | Compose | 一屏 UI 不值一个 Compose 编译器插件 + 一票依赖 |
 
 ## 3. 架构
@@ -48,11 +48,13 @@ android/                        新增，Gradle 工程（不属于 Go module）
     BootReceiver.kt             BOOT_COMPLETED → 按 server_enabled && autostart 拉起
     Prefs.kt                    SharedPreferences：server_enabled / autostart
   app/src/main/AndroidManifest.xml
-  app/src/main/jniLibs/arm64-v8a/libgojni.so   gomobile 产物（gitignore）
-  app/libs/lanbox.aar                          gomobile 产物（gitignore）
-mobile/                         新增，Go 包（仅标准库；不 import x/mobile）
-  lanbox.go                     Start/Stop/Running/Addrs/CertPin/LoopbackToken/Logs/Version
+  app/src/main/jniLibs/arm64-v8a/liblanbox.so  c-shared 产物（gitignore）
+mobile/                         新增，Go 包（仅标准库）
+  lanbox.go                     Configure/Start/Stop/Running/Addrs/CertPin/LoopbackToken/Logs/AdminPassword
   lanbox_test.go
+mobile/jni/                     新增，c-shared 入口（package main）
+  jni_android.go                //export Java_top_glj0_lanbox_Native_*（仅 android && cgo）
+  jni_stub.go                   非 Android 平台的空 main，保证 go build ./... 可跑
 internal/app/                   新增，从 cmd/lanbox 抽出的装配层
   app.go                        New / Start / Shutdown / Info
   app_test.go
@@ -61,9 +63,9 @@ internal/config/                改：支持 LockedKeys（App 强制字段，网
 internal/httpapi/               改：Options.AllowLoopbackLogin + GET /__app/login
 ```
 
-分层边界：`mobile/` 不认识 Android，只接受「数据目录 + 强制 listen + 回调」；`internal/app` 不认识 Android 与 gomobile；Kotlin 不认识 lanbox 的内部包，只认 AAR 暴露的 8 个函数。
+分层边界：`mobile/` 不认识 Android，只接受「数据目录 + 强制 listen + 参数」；`mobile/jni` 只做 jstring/jboolean 转换；`internal/app` 不认识 Android；Kotlin 只认 `Native` 对象暴露的 9 个方法。
 
-### Go 侧对外 API（gomobile 可绑定）
+### Go 侧对外 API
 
 ```go
 func Configure(dataDir, listen, mdnsHostname, version string) // 每次 Start 前设置
@@ -74,9 +76,10 @@ func Addrs() string       // 每行一个 https://<ip>:<port>（含 127.0.0.1 �
 func CertPin() string     // sha256(DER) 小写 hex
 func LoopbackToken() string
 func Logs() string        // ring buffer 最近 200 行
+func AdminPassword() string // 首启 admin 明文密码（仅一次）
 ```
 
-全部用 `string/bool/error`，避免 gomobile 的结构体/回调绑定限制。
+全部用 `string/bool/error`：JNI 层只需 jstring/jboolean 互转，没有结构体与回调。
 
 ### 数据流
 
@@ -155,9 +158,10 @@ SharedPreferences.server_enabled
 
 ```
 make android
-  1) 检测 ANDROID_HOME / NDK / JDK / gomobile，缺什么报什么（不静默失败）
-  2) gomobile bind -target=android/arm64 -androidapi 26 \
-       -ldflags "-X main.version=..." -o android/app/libs/lanbox.aar ./mobile
+  1) 检测 ANDROID_HOME / NDK / JDK，缺什么报什么（不静默失败）
+  2) CGO_ENABLED=1 GOOS=android GOARCH=arm64 CC=<ndk>/…/aarch64-linux-android26-clang \
+       go build -buildmode=c-shared -trimpath -ldflags "-s -w" \
+       -o android/app/src/main/jniLibs/arm64-v8a/liblanbox.so ./mobile/jni
   3) (cd android && ./gradlew :app:assembleRelease)
   4) cp android/app/build/outputs/apk/release/app-release.apk dist/lanbox-android.apk
   5) 重算 dist/SHA256SUMS
@@ -165,11 +169,11 @@ make android-keystore   用 keytool 生成 android/lanbox-release.jks + 写 keys
 ```
 
 - 无 `keystore.properties` 时退回 debug 签名，产物名带 `-debug` 并提示「无法覆盖安装」（侧载必须固定签名才能升级）
-- `android/`、`keystore.properties`、`jniLibs/`、`app/libs/` 加入 `.gitignore`（生成物与私钥不入库）
+- `android/` 的构建产物、`keystore.properties`、`jniLibs/`、`app/libs/` 加入 `.gitignore`（生成物与私钥不入库）
 - Windows 上另给 `build-windows.ps1` 的等价入口，与现有 `make windows` 分工一致
-- Go 侧 `go.mod` 不变（`mobile/` 只用标准库）；Kotlin 侧仅 `androidx.appcompat` + `androidx.core`
+- Go 侧 `go.mod` 不变（`mobile/`、`mobile/jni` 只用标准库 + cgo）；Kotlin 侧仅 `androidx.appcompat` + `androidx.core`
 
-环境前置（一次性）：`platforms;android-35`、`ndk;27.x`（约 1.5GB 下载）、JDK 17–21（优先由 Gradle toolchain 自动 provision Temurin 21，失败则退回 Studio 的 JBR）、adb 加入 PATH。
+环境前置（一次性）：`platforms;android-35`、`build-tools;35.0.0`、`ndk;27.x`（约 1.5GB 下载）、JDK 21、adb 加入 PATH。**不需要 gomobile**。
 
 已实测的环境现状（本机）：SDK 在 `C:\Users\glj0\AppData\Local\Android\Sdk`（有 `android-30`、`android-37.0`，缺 35；无 NDK）；JDK 只有 Android Studio 的 JBR 25；adb 37.0.1；调试设备 `10.0.0.122:39655`（Xiaomi-13）当前 TCP 可达但 `adb connect` 失败，需重新开无线调试/重新配对。
 
@@ -199,6 +203,6 @@ make android-keystore   用 keytool 生成 android/lanbox-release.jks + 写 keys
 |---|---|
 | 自签证书导致其他设备首次访问有警告 | 明确文档 + 状态页二维码直接指向 `https://<ip>:8443`；指纹可在状态页核对 |
 | 各家 ROM 杀后台（MIUI/EMUI 尤其） | 通知常驻 + WakeLock/WifiLock + 引导加白名单 + 失败时首页给出「可能被系统清理」提示 |
-| gomobile 工具链版本漂移 | `make android` 打印 `gomobile version`；README 记录验证过的组合 |
+| NDK 版本与 c-shared 工具链不匹配 | `make android` 打印 NDK 路径与 clang 版本；README 记录验证过的组合（NDK 27.0.12077973 + Go 1.25） |
 | 抽 `internal/app` 改动现有服务端 | 先加测试再搬代码；`cmd/lanbox` 行为（信号/自重启/flag）逐条比对验收 |
 | 手机存储被大文件占满 | `min_free_disk_mb=512` + `max_file_size_mb=512` 双保险，超限返回服务端原有错误 |

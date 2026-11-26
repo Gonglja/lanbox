@@ -4,9 +4,9 @@
 
 **Goal:** 产出一个 `top.glj0.lanbox` APK：前台 Service 里跑 Go 服务端（8443 自签 HTTPS），App 内 WebView 免密进入同一套 Web UI，手机既能当共享盘也能收发。
 
-**Architecture:** 把 `cmd/lanbox` 的装配逻辑抽到 `internal/app`，再用 `mobile/`（仅标准库）包一层 gomobile 可绑定的 API → `gomobile bind` 出 AAR；Kotlin 侧只有 Service（三把锁 + 通知）、一屏 Compose 替代（XML）、WebView（证书指纹固定 + 回环引导登录）。
+**Architecture:** 把 `cmd/lanbox` 的装配逻辑抽到 `internal/app`，`mobile/` 包一层简单 API，`mobile/jni` 用 `-buildmode=c-shared` 编成 `liblanbox.so` 并手写 JNI；Kotlin 侧只有 Service（三把锁 + 通知）、一屏 XML、WebView（证书指纹固定 + 回环引导登录）。
 
-**Tech Stack:** Go 1.25（无第三方依赖）、gomobile、Gradle 8.13 + AGP 8.7.3 + Kotlin 2.0.21、AppCompat、minSdk 26 / targetSdk 35、仅 arm64-v8a。
+**Tech Stack:** Go 1.25（无第三方依赖）+ cgo/NDK 27、Gradle 8.13 + AGP 8.7.3 + Kotlin 2.0.21、AppCompat、minSdk 26 / targetSdk 35、仅 arm64-v8a。
 
 **设计文档:** `docs/superpowers/specs/2026-11-26-android-app-design.md`
 **分支:** `feat/android`（已从 `main` 创建，工作区干净）
@@ -381,7 +381,7 @@ git add internal/httpapi && git commit -m "feat(httpapi): 回环一次性引导�
 
 ---
 
-## Task 4: `mobile/` 包（gomobile 可绑定 API）
+## Task 4: `mobile/` 包（Android 可调用的服务端 API）
 
 **Files:**
 - Create: `mobile/lanbox.go`, `mobile/lanbox_test.go`
@@ -415,8 +415,8 @@ go test ./mobile -count=1     # 期望 package 不存在
 **Step 3: 实现**
 
 ```go
-// Package mobile 是 Android 端（gomobile bind）的唯一入口。
-// 约束：只用标准库；导出函数只出现 string/bool/error（gomobile 绑定限制）。
+// Package mobile 是 Android 端（JNI）的唯一入口。
+// 约束：只用标准库；导出函数只出现 string/bool/error（JNI 只需 jstring/jboolean）。
 package mobile
 
 func Configure(dataDir, listen, mdnsHostname, version string)
@@ -446,54 +446,79 @@ go test ./mobile ./internal/app -count=1 && go test ./... -count=1
 **Step 5: 提交**
 
 ```bash
-git add mobile && git commit -m "feat(mobile): gomobile 可绑定的服务端入口"
+git add mobile && git commit -m "feat(mobile): Android 可调用的服务端入口"
 ```
 
 ---
 
-## Task 5: gomobile 产出 AAR（工具链验证）
+## Task 5: 编出 `liblanbox.so`（c-shared + JNI）
 
 **Files:**
+- Create: `mobile/jni/jni_android.go`（`//go:build android && cgo`，package main）
+- Create: `mobile/jni/jni_stub.go`（`//go:build !android`，空 main）
 - Modify: `.gitignore`
-- 产物（不入库）：`android/app/libs/lanbox.aar`、`android/app/src/main/jniLibs/arm64-v8a/libgojni.so`
+- 产物（不入库）：`android/app/src/main/jniLibs/arm64-v8a/liblanbox.so`
 
-**Step 1: 安装 gomobile**
+> 为什么不用 gomobile：2026 版 `gomobile bind` 要求 `go.mod` 里出现
+> `tool golang.org/x/mobile/cmd/gobind`，并把 `go` 指令抬到 1.26；本仓库要保持
+> Go 1.25 + 零第三方依赖。`-buildmode=c-shared` 只依赖 NDK。
+
+**Step 1: 写 JNI 包装**
+
+`jni_android.go` 的 cgo 前导里放两个 C 辅助函数（Go 里没法直接调 `(*env)->NewStringUTF`）：
+
+```c
+static char *lanbox_copy_jstring(JNIEnv *env, jstring s);
+static jstring lanbox_new_jstring(JNIEnv *env, const char *s);
+```
+
+然后 `//export Java_top_glj0_lanbox_Native_<方法名>` 逐个转发到 `mobile` 包：
+
+```go
+//export Java_top_glj0_lanbox_Native_configure
+func Java_top_glj0_lanbox_Native_configure(env *C.JNIEnv, obj C.jobject, dataDir, listen, hostname, version C.jstring)
+
+//export Java_top_glj0_lanbox_Native_start   // 返回 "" 表示成功，否则是错误文案
+//export Java_top_glj0_lanbox_Native_stop
+//export Java_top_glj0_lanbox_Native_running // jboolean
+//export Java_top_glj0_lanbox_Native_addrs
+//export Java_top_glj0_lanbox_Native_certPin
+//export Java_top_glj0_lanbox_Native_loopbackToken
+//export Java_top_glj0_lanbox_Native_logs
+//export Java_top_glj0_lanbox_Native_adminPassword
+```
+
+`jni_stub.go` 只放 `func main() {}`，让开发机上的 `go build ./...` 不报错。
+
+**Step 2: 编 .so**
 
 ```bash
-export JAVA_HOME="/c/Program Files/Eclipse Adoptium/jdk-21.0.5.11-hotspot"
-export ANDROID_HOME="$ANDROID_SDK"
-go install golang.org/x/mobile/cmd/gomobile@latest
-go install golang.org/x/mobile/cmd/gobind@latest
-export PATH="$PATH:$(go env GOPATH)/bin"
-gomobile init            # 首次会编译 x/mobile 工具
-gomobile version
+S=/c/Users/glj0/AppData/Local/Android/Sdk
+NDKBIN="$S/ndk/27.0.12077973/toolchains/llvm/prebuilt/windows-x86_64/bin"
+mkdir -p android/app/src/main/jniLibs/arm64-v8a
+CGO_ENABLED=1 GOOS=android GOARCH=arm64   CC="$(cygpath -w "$NDKBIN")/aarch64-linux-android26-clang.cmd"   go build -buildmode=c-shared -trimpath -ldflags "-s -w"   -o android/app/src/main/jniLibs/arm64-v8a/liblanbox.so ./mobile/jni
 ```
-期望：`gomobile version +<commit> ...`。
+期望：`liblanbox.so` 约 7–8MB，同目录多出 `liblanbox.h`。
 
-**Step 2: 生成 AAR**
+**Step 3: 校验导出的 JNI 符号**
 
 ```bash
-mkdir -p android/app/libs
-gomobile bind -target=android/arm64 -androidapi 26 \
-  -javapkg=top.glj0.lanboxcore \
-  -o android/app/libs/lanbox.aar ./mobile
-ls -la android/app/libs/lanbox.aar
+"$NDKBIN/llvm-nm.exe" -D --defined-only android/app/src/main/jniLibs/arm64-v8a/liblanbox.so | grep Java_top_glj0
 ```
-期望：文件存在，约 10–15MB。失败时常见原因：`ANDROID_HOME`/`ANDROID_NDK_HOME` 未导、NDK 版本与 gomobile 不匹配（改用 `ANDROID_NDK_HOME=$ANDROID_SDK/ndk/27.0.12077973`）。
+期望：9 个 `T Java_top_glj0_lanbox_Native_*`。
 
-**Step 3: 检查生成的 Java 签名**
+**Step 4: 开发机回归**
 
 ```bash
-unzip -o -q android/app/libs/lanbox.aar -d /tmp/aar && find /tmp/aar -name "*.jar" | head
-unzip -l /tmp/aar/classes.jar | grep -i mobile
+go build ./... && go vet ./... && go test ./mobile ./internal/app -count=1
 ```
-期望：`top/glj0/lanboxcore/Mobile.class`（静态方法 `Start/Stop/Configure/...`）。
+期望：全绿（`mobile/jni` 在非 Android 平台走 stub）。
 
-**Step 4: .gitignore**
+**Step 5: .gitignore**
 
 ```gitignore
-android/app/libs/
 android/app/src/main/jniLibs/
+android/app/libs/
 android/.gradle/
 android/build/
 android/app/build/
@@ -502,13 +527,11 @@ android/keystore.properties
 android/*.jks
 ```
 
-**Step 5: 提交**
+**Step 6: 提交**
 
 ```bash
-git add .gitignore && git commit -m "chore(android): 忽略 gomobile 产物与签名文件"
+git add .gitignore mobile/jni && git commit -m "feat(mobile): c-shared + JNI 入口，编出 liblanbox.so"
 ```
-
----
 
 ## Task 6: Gradle 工程骨架（能编出空 APK）
 
@@ -563,10 +586,10 @@ android {
 }
 
 dependencies {
-    implementation(files("libs/lanbox.aar"))
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.core:core-ktx:1.13.1")
 }
+// JNI 库走 app/src/main/jniLibs/arm64-v8a/liblanbox.so，无需额外依赖声明。
 ```
 
 `AndroidManifest.xml`（Task 7-10 再补 service/receiver）
@@ -868,17 +891,18 @@ git add android/app/src/main && git commit -m "feat(android): 开机自启（含
 
 ```make
 ANDROID_SDK ?= $(HOME)/AppData/Local/Android/Sdk
-ANDROID_AAR := android/app/libs/lanbox.aar
+ANDROID_NDK ?= $(ANDROID_SDK)/ndk/27.0.12077973
+ANDROID_SO  := android/app/src/main/jniLibs/arm64-v8a/liblanbox.so
 
-## android: 生成 AAR 并打 release APK 到 dist/lanbox-android.apk
-android: $(ANDROID_AAR)
+## android: 编 .so 并打 release APK 到 dist/lanbox-android.apk
+android: $(ANDROID_SO)
 	cd android && ./gradlew :app:assembleRelease
 	cp android/app/build/outputs/apk/release/app-release.apk dist/lanbox-android.apk
 	@echo "已生成 dist/lanbox-android.apk"
 
-$(ANDROID_AAR): $(shell find mobile internal -name '*.go') go.mod
-	@mkdir -p android/app/libs
-	gomobile bind -target=android/arm64 -androidapi 26 -javapkg=top.glj0.lanboxcore -o $@ ./mobile
+$(ANDROID_SO): $(shell find mobile internal -name '*.go') go.mod
+	@mkdir -p $(dir $@)
+	CGO_ENABLED=1 GOOS=android GOARCH=arm64 	  CC="$(ANDROID_NDK)/toolchains/llvm/prebuilt/$(HOST_NDK_TAG)/bin/aarch64-linux-android26-clang" 	  go build -buildmode=c-shared -trimpath -ldflags "-s -w" -o $@ ./mobile/jni
 
 ## android-keystore: 生成侧载用签名（只需一次，务必备份）
 android-keystore:

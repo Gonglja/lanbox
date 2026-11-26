@@ -8,3 +8,13 @@ data/
 *.exe~
 *.out
 config.json
+
+# Android 构建产物与签名
+android/app/src/main/jniLibs/
+android/app/libs/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/keystore.properties
+android/*.jks
