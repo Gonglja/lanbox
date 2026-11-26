@@ -55,6 +55,7 @@ build:
 ## dist: 交叉编译全部目标（Linux + Windows）到 dist/
 dist:
 	@mkdir -p $(DIST)
+	@cp LICENSE $(DIST)/LICENSE
 	@set -eu; \
 	for t in $(TARGETS); do \
 		os=$${t%%/*}; \
@@ -113,7 +114,7 @@ client:
 
 ## checksums: 生成并打印 dist/SHA256SUMS
 checksums:
-	@cd $(DIST) && sha256sum $(APP)-* > SHA256SUMS && cat SHA256SUMS
+	@cd $(DIST) && sha256sum $(APP)-* lanbox-client.html LICENSE > SHA256SUMS && cat SHA256SUMS
 
 ## test: 跑全部测试
 test:

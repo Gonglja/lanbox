@@ -159,7 +159,7 @@ Bearer 令牌通道：
 ## 交叉编译
 
 ```bash
-make dist     # 产出 dist/ 下 12 个静态二进制（Linux + Windows，服务端 + CLI）+ 单文件客户端 + SHA256SUMS
+make dist     # 产出 dist/ 下 14 个静态二进制（Linux + Windows，服务端 + CLI + 客户端）+ 单文件网页 + LICENSE + SHA256SUMS
 ```
 
 | 产物 | 适用 |
@@ -173,6 +173,8 @@ make dist     # 产出 dist/ 下 12 个静态二进制（Linux + Windows，服�
 | `dist/lanbox-windows-arm64.exe` | Windows on ARM |
 | `dist/lanbox-agent-windows-arm64.exe` | Windows 客户端（ARM64） |
 | `dist/lanbox-client.html` | 纯 web 客户端（单文件，任意浏览器打开） |
+| `dist/LICENSE` | 许可证正文（MIT）；分发产物时请一并带上 |
+| `dist/SHA256SUMS` | 上面全部产物的校验和 |
 
 `lanbox-cli-*` 是配套的命令行客户端，平台与本表一致（Windows 版同样带 `.exe`）。
 
@@ -207,7 +209,7 @@ Windows 版说明：
   powershell -ExecutionPolicy Bypass -File build-windows.ps1 -Version v1.0.0 -Arch amd64
   ```
 
-  产物与 `make windows` 一致：`dist\lanbox-windows-{amd64,arm64}.exe`、`dist\lanbox-cli-windows-{amd64,arm64}.exe`，并生成 `dist\SHA256SUMS`。
+  产物与 `make windows` 一致：`dist\lanbox-windows-{amd64,arm64}.exe`、`dist\lanbox-cli-windows-{amd64,arm64}.exe`，并生成 `dist\SHA256SUMS`、拷入 `dist\LICENSE`。
 - 改 `listen` 后的「立即重启」可用：Windows 没有 `exec(2)`，实现是**启动新进程再退出旧进程**（PID 会变）。
 - `data/tls`、会话文件的 0600/0700 收紧只在类 Unix 平台生效；Windows 用文件系统 ACL，Go 的权限位不适用。
 - mDNS 通告与 `lanbox-cli discover` 在 Windows 上可用（会逐网卡加入组播组并固定出口，避免被虚拟网卡抢走）。
@@ -455,3 +457,9 @@ node --check client/app.js         # 语法校验（web/*.js 同样适用）
 分片上传/断点续传、回收站与自动过期、频道与标签、全文索引、富文本编辑器、多语言。
 
 保留空目录、符号链接与文件权限；zip 断点续传；单附件 >4GB 的 zip（默认配置不会触发）
+
+## 许可证
+
+MIT License，见 [LICENSE](LICENSE)。`make dist` / `build-windows.ps1` 会把 `LICENSE` 一并拷进 `dist/`，分发二进制时请连同该文件一起给出。
+
+Windows 客户端依赖 [Wails](https://wails.io) 与 [fyne.io/systray](https://github.com/fyne-io/systray)（均为 MIT）；服务端与 CLI 无第三方依赖。
