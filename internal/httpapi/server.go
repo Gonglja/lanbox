@@ -1,0 +1,114 @@
+// Package httpapi 提供 lanbox 的 HTTP 接口与内嵌前端。
+package httpapi
+
+import (
+	"encoding/json"
+	"io/fs"
+	"log"
+	"net/http"
+
+	"lanbox/internal/auth"
+	"lanbox/internal/config"
+	"lanbox/internal/store"
+)
+
+// Options 是构建 Server 所需的依赖。
+type Options struct {
+	Cfg   config.Config
+	Store *store.Store
+	Auth  *auth.Manager
+	Web   fs.FS
+	Log   *log.Logger
+}
+
+// Server 是 lanbox 的 HTTP 处理入口。
+type Server struct {
+	cfg   config.Config
+	store *store.Store
+	auth  *auth.Manager
+	hub   *Hub
+	web   fs.FS
+	log   *log.Logger
+	mux   *http.ServeMux
+}
+
+// New 组装路由与中间件。
+func New(opts Options) *Server {
+	if opts.Log == nil {
+		opts.Log = log.Default()
+	}
+	s := &Server{
+		cfg:   opts.Cfg,
+		store: opts.Store,
+		auth:  opts.Auth,
+		hub:   NewHub(),
+		web:   opts.Web,
+		log:   opts.Log,
+		mux:   http.NewServeMux(),
+	}
+	s.routes()
+	return s
+}
+
+func (s *Server) routes() {
+	s.mux.HandleFunc("POST /api/login", s.handleLogin)
+	s.mux.HandleFunc("POST /api/logout", s.withAuth(s.handleLogout))
+	s.mux.HandleFunc("GET /api/me", s.withAuth(s.handleMe))
+	s.mux.HandleFunc("POST /api/password", s.withAuth(s.handleChangePassword))
+
+	s.mux.HandleFunc("GET /api/items", s.withAuth(s.handleListItems))
+	s.mux.HandleFunc("POST /api/items", s.withAuth(s.handleCreateItem))
+	s.mux.HandleFunc("GET /api/items/{id}", s.withAuth(s.handleGetItem))
+	s.mux.HandleFunc("PATCH /api/items/{id}", s.withAuth(s.handlePatchItem))
+	s.mux.HandleFunc("DELETE /api/items/{id}", s.withAuth(s.handleDeleteItem))
+	s.mux.HandleFunc("DELETE /api/items/{id}/files/{fid}", s.withAuth(s.handleDeleteFile))
+	s.mux.HandleFunc("GET /api/items/{id}/files/{fid}", s.withAuth(s.handleDownload))
+	s.mux.HandleFunc("GET /api/events", s.withAuth(s.handleEvents))
+
+	s.mux.HandleFunc("GET /api/users", s.withAdmin(s.handleListUsers))
+	s.mux.HandleFunc("POST /api/users", s.withAdmin(s.handleCreateUser))
+	s.mux.HandleFunc("POST /api/users/{name}/password", s.withAdmin(s.handleSetUserPassword))
+	s.mux.HandleFunc("DELETE /api/users/{name}", s.withAdmin(s.handleDeleteUser))
+
+	s.mux.Handle("GET /", s.staticHandler())
+}
+
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.chain(s.mux).ServeHTTP(w, r)
+}
+
+// Close 关闭所有 SSE 连接，供优雅退出调用。
+func (s *Server) Close() { s.hub.Close() }
+
+// staticHandler 提供内嵌前端资源。
+func (s *Server) staticHandler() http.Handler {
+	fileServer := http.FileServerFS(s.web)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		// 首页直接读出 index.html，避免 FileServer 对 "/index.html" 做 "./" 重定向
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			page, err := fs.ReadFile(s.web, "index.html")
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "internal", "前端资源缺失")
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Write(page)
+			return
+		}
+		fileServer.ServeHTTP(w, r)
+	})
+}
+
+// broadcast 序列化并推送事件。
+func (s *Server) broadcast(kind string, payload any) {
+	if s.hub.Count() == 0 {
+		return
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		s.log.Printf("warn: 事件序列化失败: %v", err)
+		return
+	}
+	s.hub.Broadcast(Event{Type: kind, Data: string(raw)})
+}
