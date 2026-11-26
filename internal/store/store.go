@@ -78,7 +78,9 @@ func (it *Item) match(needleLower string) bool {
 		return true
 	}
 	for _, f := range it.Files {
-		if strings.Contains(strings.ToLower(f.Name), needleLower) {
+		// RelPath 覆盖完整路径，目录名也能被搜到；Name 兜底防 Path 与 Name 不一致。
+		if strings.Contains(strings.ToLower(f.RelPath()), needleLower) ||
+			strings.Contains(strings.ToLower(f.Name), needleLower) {
 			return true
 		}
 	}

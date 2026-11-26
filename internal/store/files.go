@@ -12,6 +12,17 @@ import (
 	"strings"
 )
 
+// diskName 返回附件在 files/ 下的磁盘文件名：<文件ID>__<basename>。
+// 写（AddFile）、读（FilePath）、删（DeleteFile）共用，避免三处各自拼装后走偏。
+// 极端情况下 Path 与 Name 都为空（外部写入的 meta），退化为 <fid>__<fid>。
+func diskName(f File) string {
+	name := f.Name
+	if name == "" {
+		name = path.Base(f.RelPath())
+	}
+	return f.ID + "__" + name
+}
+
 // AddFile 将 r 流式写入该内容的 files 目录，同时计算 sha256。
 // 内存占用恒定，与文件大小无关。
 // 调用约定：同一 item 的 AddFile 必须串行调用（httpapi 单次上传内顺序处理），
@@ -125,11 +136,7 @@ func (s *Store) FilePath(itemID, fileID string) (string, *File, error) {
 		return "", nil, ErrFileNotFound
 	}
 	// 磁盘名一直是 <文件ID>__<basename>；旧数据没有 path，name 也非空，能直接命中。
-	name := found.Name
-	if name == "" {
-		name = path.Base(found.RelPath())
-	}
-	p := filepath.Join(s.filesDir(itemID), found.ID+"__"+name)
+	p := filepath.Join(s.filesDir(itemID), diskName(*found))
 	return p, found, nil
 }
 
@@ -179,7 +186,7 @@ func (s *Store) DeleteFile(itemID, fileID string) (*Item, error) {
 	if idx < 0 {
 		return nil, ErrFileNotFound
 	}
-	diskPath := filepath.Join(s.filesDir(itemID), cp.Files[idx].ID+"__"+cp.Files[idx].Name)
+	diskPath := filepath.Join(s.filesDir(itemID), diskName(cp.Files[idx]))
 	cp.Files = append(cp.Files[:idx], cp.Files[idx+1:]...)
 	if err := s.saveMeta(cp); err != nil {
 		return nil, err

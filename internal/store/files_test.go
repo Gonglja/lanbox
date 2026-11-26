@@ -206,3 +206,80 @@ func TestOpenLegacyMetaWithoutPath(t *testing.T) {
 		t.Fatalf("旧附件应能定位到磁盘: %v", err)
 	}
 }
+
+func TestDiskName(t *testing.T) {
+	cases := []struct {
+		f    File
+		want string
+	}{
+		{File{ID: "f1", Name: "a.txt", Path: "photos/a.txt"}, "f1__a.txt"},
+		{File{ID: "f2", Path: "photos/a.jpg"}, "f2__a.jpg"},
+		{File{ID: "f3"}, "f3__f3"},
+	}
+	for _, c := range cases {
+		if got := diskName(c.f); got != c.want {
+			t.Fatalf("diskName(%+v)=%q，期望 %q", c.f, got, c.want)
+		}
+	}
+}
+
+func TestRelPathFallsBackToID(t *testing.T) {
+	if got := (File{ID: "f0"}).RelPath(); got != "f0" {
+		t.Fatalf("双空时应回退 ID，得到 %q", got)
+	}
+}
+
+func TestFilePathUsesBasenameWhenNameEmpty(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "items")
+	dir := filepath.Join(root, "0000000000002-def")
+	if err := os.MkdirAll(filepath.Join(dir, "files"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	meta := `{"id":"0000000000002-def","created_at":"2026-01-01T00:00:00Z","created_by":"u","files":[{"id":"f9","path":"photos/2024/a.jpg","size":3}]}`
+	if err := os.WriteFile(filepath.Join(dir, "meta.json"), []byte(meta), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "files", "f9__a.jpg"), []byte("abc"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(root, Options{})
+	if err != nil {
+		t.Fatalf("打开存储失败: %v", err)
+	}
+	disk, f, err := s.FilePath("0000000000002-def", "f9")
+	if err != nil {
+		t.Fatalf("解析附件路径失败: %v", err)
+	}
+	if filepath.Base(disk) != "f9__a.jpg" {
+		t.Fatalf("应回退到 path 的 basename: %s", disk)
+	}
+	if f.RelPath() != "photos/2024/a.jpg" {
+		t.Fatalf("RelPath 应返回 path，得到 %q", f.RelPath())
+	}
+
+	// 删除也要走同一套磁盘名：没有兜底时会删 <fid>__ 而静默留下孤儿文件。
+	if _, err := s.DeleteFile("0000000000002-def", "f9"); err != nil {
+		t.Fatalf("删除附件失败: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "files", "f9__a.jpg")); !os.IsNotExist(err) {
+		t.Fatal("附件文件应已被删除")
+	}
+}
+
+func TestMatchMatchesNestedPath(t *testing.T) {
+	it := &Item{Files: []File{{ID: "f1", Path: "photos/2024/a.jpg", Name: "a.jpg"}}}
+	for _, needle := range []string{"photos", "photos/2024/a.jpg", "2024", "a.jpg"} {
+		if !it.match(strings.ToLower(needle)) {
+			t.Fatalf("%q 应命中路径", needle)
+		}
+	}
+	if it.match("videos") {
+		t.Fatal("不相关的关键词不应命中")
+	}
+
+	legacy := &Item{Files: []File{{ID: "f2", Name: "a.txt"}}}
+	if !legacy.match("a.txt") {
+		t.Fatal("旧数据（无 path）仍应按文件名命中")
+	}
+}
