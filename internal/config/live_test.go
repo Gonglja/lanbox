@@ -145,6 +145,11 @@ func TestLiveLockedKeys(t *testing.T) {
 		t.Fatalf("热更后锁字段漂移: %q", got)
 	}
 
+	// 网页覆盖文件必须落在被锁的 data_dir 里（Android 上默认 ./data 不可写）
+	if _, webPath := l.Paths(); webPath != filepath.Join(lockedData, "webconfig.json") {
+		t.Fatalf("webPath 应跟随锁定的 data_dir，得到 %q", webPath)
+	}
+
 	// 恢复默认不能清掉锁字段
 	if _, err := l.DropWebOverride("listen"); err != nil {
 		t.Fatalf("DropWebOverride 失败: %v", err)

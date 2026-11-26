@@ -32,6 +32,9 @@ type Options struct {
 	LoopbackToken      string
 	// RestartDisabled 为 true 时 /api/config/restart 返回 501（手机上没有进程重启）。
 	RestartDisabled bool
+	// IfaceAddrs 提供宿主机自己的非回环 IP（Android 上 Go 拿不到网卡列表）。
+	// 为 nil 时只依赖 net.Interfaces()。
+	IfaceAddrs func() []string
 }
 
 // Server 是 lanbox 的 HTTP 处理入口。
@@ -54,6 +57,7 @@ type Server struct {
 	allowLoopback   bool
 	loopbackToken   string
 	restartDisabled  bool
+	ifaceAddrs       func() []string
 	loopbackLimiter *auth.Limiter
 	discoverMu    sync.Mutex
 	discoverCache []DiscoveredServer
@@ -85,6 +89,7 @@ func New(opts Options) *Server {
 		allowLoopback:   opts.AllowLoopbackLogin,
 		loopbackToken:   opts.LoopbackToken,
 		restartDisabled:  opts.RestartDisabled,
+		ifaceAddrs:       opts.IfaceAddrs,
 		loopbackLimiter: auth.NewLimiter(time.Minute, 10, time.Minute),
 		startedAt:  opts.StartedAt,
 		version:    opts.Version,

@@ -191,6 +191,7 @@ func New(opts Options) (*App, error) {
 		AllowLoopbackLogin: opts.AllowLoopbackLogin,
 		LoopbackToken:      a.loopbackToken,
 		RestartDisabled:    opts.OnRestart == nil,
+		IfaceAddrs:         a.localIPs,
 	})
 	return a, nil
 }
@@ -387,6 +388,31 @@ func (a *App) buildInfo() Info {
 		LoopbackToken: a.loopbackToken,
 		Version:       a.opts.Version,
 	}
+}
+
+// localIPs 汇总宿主能提供的非回环 IP：优先用宿主传进来的（Android），
+// 再补上网卡枚举结果（桌面端）。Android 上枚举会被 SELinux 拒绝，返回空。
+func (a *App) localIPs() []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(raw string) {
+		raw = strings.TrimSpace(raw)
+		ip := net.ParseIP(raw)
+		if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || seen[raw] {
+			return
+		}
+		seen[raw] = true
+		out = append(out, raw)
+	}
+	for _, ip := range a.opts.LanIPs {
+		add(ip)
+	}
+	if ips, err := tlsutil.LocalIPs(); err == nil {
+		for _, ip := range ips {
+			add(ip)
+		}
+	}
+	return out
 }
 
 // storeOpts 把配置映射为 store 限额。

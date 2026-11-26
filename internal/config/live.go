@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -103,6 +104,10 @@ func (l *Live) Lock(pairs map[string]string) {
 	}
 	applyLocked(&l.cur, l.locked)
 	applyLocked(&l.base, l.locked)
+	// 网页覆盖文件跟着被锁的 data_dir 走（Android 上默认的 ./data 不可写）。
+	if dir, ok := l.locked["data_dir"]; ok && dir != "" {
+		l.webPath = filepath.Join(dir, "webconfig.json")
+	}
 }
 
 // applyLocked 把锁定值写进配置；未知键忽略。
