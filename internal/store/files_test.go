@@ -365,3 +365,28 @@ func TestAddFileMaxFilesOption(t *testing.T) {
 		t.Fatalf("超过 MaxFiles 应报 ErrTooManyFiles，得到 %v", err)
 	}
 }
+
+func TestAddFileDedupeExhaustionIsDomainError(t *testing.T) {
+	// MaxFiles=3：a.txt、a~2.txt、a~3.txt 三次后第四次必须仍是领域错误，而不是 500 的普通 error。
+	s := newStore(t, Options{MaxFiles: 3})
+	it, _ := s.Create(CreateInput{Text: "x", CreatedBy: "u"})
+	for i := 0; i < 3; i++ {
+		if _, err := s.AddFile(it.ID, "a.txt", 1, bytes.NewReader([]byte("a"))); err != nil {
+			t.Fatalf("第 %d 个附件失败: %v", i, err)
+		}
+	}
+	if _, err := s.AddFile(it.ID, "a.txt", 1, bytes.NewReader([]byte("a"))); !errors.Is(err, ErrTooManyFiles) {
+		t.Fatalf("撞名耗尽应返回 ErrTooManyFiles，得到 %v", err)
+	}
+}
+
+func TestUniqueRelPathRespectsLimit(t *testing.T) {
+	// 候选名被占满时必须返回空串（由调用方转成领域错误），而不是继续无限找。
+	taken := map[string]bool{"a.txt": true, "a~2.txt": true, "a~3.txt": true}
+	if got := uniqueRelPath(taken, "a.txt", 3); got != "" {
+		t.Fatalf("上限为 3 时候选名已耗尽，应返回空串，得到 %q", got)
+	}
+	if got := uniqueRelPath(taken, "a.txt", 4); got != "a~4.txt" {
+		t.Fatalf("上限放宽到 4 时应得到 a~4.txt，得到 %q", got)
+	}
+}

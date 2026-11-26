@@ -53,7 +53,12 @@ func (s *Server) writeStoreErr(w http.ResponseWriter, err error) {
 			fmt.Sprintf("磁盘空间不足，需保留至少 %dMB 空闲", s.cfg.MinFreeDiskMB))
 	case errors.Is(err, store.ErrTooManyFiles):
 		writeError(w, http.StatusBadRequest, "too_many_files",
-			fmt.Sprintf("附件数量不能超过 %d 个", store.DefaultMaxFiles))
+			fmt.Sprintf("附件数量不能超过 %d 个", s.store.MaxFiles()))
+	case errors.Is(err, store.ErrBadPath):
+		writeError(w, http.StatusBadRequest, "bad_path", "附件路径不合法")
+	case errors.Is(err, store.ErrItemTooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge, "item_too_large",
+			fmt.Sprintf("单条内容超过 %dMB 上限", s.cfg.MaxItemSizeMB))
 	case errors.Is(err, store.ErrTextTooLong):
 		writeError(w, http.StatusBadRequest, "text_too_long",
 			fmt.Sprintf("文本超过 %d 字节上限", s.cfg.MaxTextBytes))

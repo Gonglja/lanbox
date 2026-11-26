@@ -24,6 +24,9 @@ func diskName(f File) string {
 	return f.ID + "__" + name
 }
 
+// MaxFiles 返回生效的单条内容附件数量上限，供 httpapi 生成提示文案。
+func (s *Store) MaxFiles() int { return s.maxFiles() }
+
 // maxFiles 返回生效的附件数量上限。
 func (s *Store) maxFiles() int {
 	if s.opts.MaxFiles > 0 {
@@ -41,16 +44,17 @@ func newFileID() string {
 	return "f" + hex.EncodeToString(b[:])
 }
 
-// uniqueRelPath 在已占用路径集合里为 p 找一个不冲突的路径。
+// uniqueRelPath 在已占用路径集合里为 p 找一个不冲突的路径，候选用完时返回空串。
+// limit 是候选编号的上界，由调用方按附件数量上限传入，避免退化成无界循环。
 // 比较大小写不敏感：Windows/macOS 解压时 A.txt 与 a.txt 会互相覆盖。
-func uniqueRelPath(taken map[string]bool, p string) string {
+func uniqueRelPath(taken map[string]bool, p string, limit int) string {
 	if !taken[strings.ToLower(p)] {
 		return p
 	}
 	dir, base := path.Split(p)
 	ext := path.Ext(base)
 	stem := strings.TrimSuffix(base, ext)
-	for i := 2; i <= 1000; i++ {
+	for i := 2; i <= limit; i++ {
 		cand := dir + stem + "~" + strconv.Itoa(i) + ext
 		if !taken[strings.ToLower(cand)] {
 			return cand
@@ -98,9 +102,9 @@ func (s *Store) AddFile(itemID, relPath string, declaredSize int64, r io.Reader)
 		}
 	}
 
-	finalPath := uniqueRelPath(taken, cleanPath)
+	finalPath := uniqueRelPath(taken, cleanPath, s.maxFiles()+1)
 	if finalPath == "" {
-		return nil, fmt.Errorf("同名附件过多，无法为 %s 分配路径", cleanPath)
+		return nil, ErrTooManyFiles
 	}
 	base := path.Base(finalPath)
 

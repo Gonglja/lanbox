@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"mime/multipart"
@@ -39,12 +40,16 @@ func newEnv(t *testing.T) *env {
 	cfg := config.Defaults()
 	cfg.DataDir = t.TempDir()
 	cfg.MaxFileSizeMB = 8
+	cfg.MaxItemSizeMB = 16
 	cfg.MinFreeDiskMB = 0
+	cfg.MaxFilesPerItem = 20
 
 	st, err := store.Open(filepath.Join(cfg.DataDir, "items"), store.Options{
 		MaxFileBytes: cfg.MaxFileBytes(),
 		MinFreeBytes: 0,
 		MaxTextBytes: cfg.MaxTextBytes,
+		MaxFiles:     cfg.MaxFilesPerItem,
+		MaxItemBytes: cfg.MaxItemBytes(),
 	})
 	if err != nil {
 		t.Fatalf("打开 store 失败: %v", err)
@@ -642,5 +647,69 @@ func TestChangeOwnPassword(t *testing.T) {
 	resp, _ = e.do(t, e.newJSONReq(t, http.MethodGet, "/api/me", nil))
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("改密后旧会话应失效，得到 %d", resp.StatusCode)
+	}
+}
+
+func TestUploadBadNameMapsTo400(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	part, err := mw.CreateFormFile("files", "***")
+	if err != nil {
+		t.Fatal(err)
+	}
+	part.Write([]byte("x"))
+	mw.Close()
+
+	req, err := http.NewRequest(http.MethodPost, e.srv.URL+"/api/items", &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, body := e.do(t, req)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("非法文件名应 400，得到 %d %s", resp.StatusCode, body)
+	}
+	var eb struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &eb); err != nil {
+		t.Fatal(err)
+	}
+	if eb.Error.Code != "bad_path" {
+		t.Fatalf("错误码应为 bad_path，得到 %q", eb.Error.Code)
+	}
+}
+
+func TestUploadTooManyFilesMessageUsesConfig(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	for i := 0; i <= e.cfg.MaxFilesPerItem; i++ {
+		part, err := mw.CreateFormFile("files", "f.txt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		part.Write([]byte("x"))
+	}
+	mw.Close()
+
+	req, err := http.NewRequest(http.MethodPost, e.srv.URL+"/api/items", &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, body := e.do(t, req)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("超过附件数量应 400，得到 %d %s", resp.StatusCode, body)
+	}
+	if !bytes.Contains(body, []byte(fmt.Sprintf("不能超过 %d 个", e.cfg.MaxFilesPerItem))) {
+		t.Fatalf("文案应带上实际上限 %d: %s", e.cfg.MaxFilesPerItem, body)
 	}
 }
