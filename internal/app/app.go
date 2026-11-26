@@ -43,6 +43,9 @@ type Options struct {
 	Log     *log.Logger // 可为 nil：日志只进环形缓冲
 	Locked  map[string]string // App 固定字段，如 listen/data_dir（桌面端留空）
 	AllowLoopbackLogin bool // 是否启用回环引导登录（只有 Android 打开）
+	// LanIPs 是宿主额外告知的局域网地址。Android 上 SELinux 禁止 netlink，
+	// Go 的 InterfaceAddrs() 只能看到回环，所以由 Kotlin 读 WiFi IPv4 传进来。
+	LanIPs []string
 	OnRestart func()  // nil 表示宿主不支持进程自重启（Android）
 }
 
@@ -82,6 +85,12 @@ type App struct {
 	mu       sync.Mutex
 	running  bool
 	serveErr chan error
+
+	// infoCache 给 Info() 加 3 秒缓存：Android 上每 1.5 秒刷新界面会反复枚举网卡，
+	// 触发 SELinux 的 netlink 拒绝日志（不影响功能，但会刷屏）。
+	infoMu    sync.Mutex
+	infoCache Info
+	infoAt    time.Time
 }
 
 // New 载入配置并装配用户库、存储、证书与 HTTP 处理器，但不监听端口。
@@ -153,6 +162,7 @@ func New(opts Options) (*App, error) {
 	}
 
 	hosts := tlsutil.Hosts(cfg.Listen)
+	hosts = append(hosts, opts.LanIPs...)
 	if cfg.MDNS.Hostname != "" {
 		hosts = append(hosts, cfg.MDNS.Hostname+".local")
 	}
@@ -246,6 +256,7 @@ func (a *App) Start() error {
 			}
 		}
 	}()
+	a.invalidateInfo()
 	a.log.Printf("info: 监听 %s（HTTPS）", cfg.Listen)
 	return nil
 }
@@ -265,6 +276,7 @@ func (a *App) Shutdown() error {
 	if mdnsRunner != nil {
 		mdnsRunner.Close()
 	}
+	a.invalidateInfo()
 	if !running || httpSrv == nil {
 		if ln != nil {
 			_ = ln.Close()
@@ -280,6 +292,13 @@ func (a *App) Shutdown() error {
 	return nil
 }
 
+// invalidateInfo 丢弃 Info 缓存（监听状态变化后调用）。
+func (a *App) invalidateInfo() {
+	a.infoMu.Lock()
+	a.infoAt = time.Time{}
+	a.infoMu.Unlock()
+}
+
 // Running 报告服务是否在运行。
 func (a *App) Running() bool {
 	a.mu.Lock()
@@ -290,8 +309,26 @@ func (a *App) Running() bool {
 // Logs 返回最近 200 行日志（环形缓冲）。
 func (a *App) Logs() string { return a.ring.String() }
 
-// Info 返回运行期信息快照。
+// Info 返回运行期信息快照（3 秒内复用上一次结果）。
 func (a *App) Info() Info {
+	a.infoMu.Lock()
+	if !a.infoAt.IsZero() && time.Since(a.infoAt) < 3*time.Second {
+		cached := a.infoCache
+		a.infoMu.Unlock()
+		return cached
+	}
+	a.infoMu.Unlock()
+
+	info := a.buildInfo()
+
+	a.infoMu.Lock()
+	a.infoCache = info
+	a.infoAt = time.Now()
+	a.infoMu.Unlock()
+	return info
+}
+
+func (a *App) buildInfo() Info {
 	cfg := a.live.Current()
 	port := cfg.ListenPort()
 	a.mu.Lock()
@@ -323,6 +360,11 @@ func (a *App) Info() Info {
 		addrs = append(addrs, url)
 	}
 	add("127.0.0.1")
+	for _, ip := range a.opts.LanIPs {
+		if ip != "" {
+			add(ip)
+		}
+	}
 	ips, err := tlsutil.LocalIPs()
 	if err == nil {
 		for _, ip := range ips {

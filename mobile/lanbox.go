@@ -31,20 +31,23 @@ var (
 		listen   string
 		hostname string
 		version  string
+		lanIP    string
 	}
 	cur           *app.App
 	adminPassword string
 )
 
 // Configure 设置启动参数；每次 Start 前调用（App 侧在 Service 启动时调用）。
-// listen 形如 ":8443"；dataDir 是 App 私有目录；mdnsHostname 例如 "lanbox-a1b2"。
-func Configure(dataDir, listen, mdnsHostname, version string) {
+// listen 形如 ":8443"；dataDir 是 App 私有目录；mdnsHostname 例如 "lanbox-a1b2"；
+// lanIP 是 Kotlin 读到的 WiFi IPv4（Android 上 Go 无法自己枚举网卡），可为空。
+func Configure(dataDir, listen, mdnsHostname, version, lanIP string) {
 	mu.Lock()
 	defer mu.Unlock()
 	opts.dataDir = dataDir
 	opts.listen = listen
 	opts.hostname = mdnsHostname
 	opts.version = version
+	opts.lanIP = lanIP
 	if strings.TrimSpace(opts.listen) == "" {
 		opts.listen = defaultListen
 	}
@@ -78,6 +81,7 @@ func Start() error {
 		},
 		AllowLoopbackLogin: true,
 		OnRestart:          nil, // 手机不支持进程自重启
+		LanIPs:             lanIPs(),
 	})
 	if err != nil {
 		return err
@@ -87,6 +91,19 @@ func Start() error {
 		adminPassword = pw
 	}
 	return a.Start()
+}
+
+// lanIPs 把 Kotlin 传来的 IPv4 拆成切片（容忍逗号/换行分隔）。
+func lanIPs() []string {
+	var out []string
+	for _, part := range strings.FieldsFunc(opts.lanIP, func(r rune) bool {
+		return r == ',' || r == '\n' || r == ' ' || r == ';'
+	}) {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 // Stop 优雅关闭服务（保留实例，可再次 Start）。

@@ -61,12 +61,13 @@ func newJString(env *C.JNIEnv, s string) C.jstring {
 }
 
 //export Java_top_glj0_lanbox_Native_configure
-func Java_top_glj0_lanbox_Native_configure(env *C.JNIEnv, obj C.jobject, dataDir, listen, hostname, version C.jstring) {
+func Java_top_glj0_lanbox_Native_configure(env *C.JNIEnv, obj C.jobject, dataDir, listen, hostname, version, lanIP C.jstring) {
 	mobile.Configure(
 		goString(env, dataDir),
 		goString(env, listen),
 		goString(env, hostname),
 		goString(env, version),
+		goString(env, lanIP),
 	)
 }
 

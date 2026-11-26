@@ -23,7 +23,7 @@ func resetState(t *testing.T) {
 
 func TestConfigureStartStop(t *testing.T) {
 	resetState(t)
-	Configure(t.TempDir(), "127.0.0.1:0", "lanbox-test", "test-version")
+	Configure(t.TempDir(), "127.0.0.1:0", "lanbox-test", "test-version", "192.168.1.23")
 	if v := Version(); v != "test-version" {
 		t.Fatalf("Version 不对: %q", v)
 	}
@@ -39,6 +39,9 @@ func TestConfigureStartStop(t *testing.T) {
 	first := strings.Split(addrs, "\n")[0]
 	if !strings.HasPrefix(first, "https://127.0.0.1:") {
 		t.Fatalf("首行应是回环地址，得到 %q（全部：%q）", first, addrs)
+	}
+	if !strings.Contains(addrs, "https://192.168.1.23:") {
+		t.Fatalf("Addrs 应包含宿主传入的局域网 IP：%q", addrs)
 	}
 	if pin := CertPin(); len(pin) != 64 {
 		t.Fatalf("CertPin 应是 64 位 hex，得到 %q", pin)
@@ -61,7 +64,7 @@ func TestConfigureStartStop(t *testing.T) {
 
 func TestStartTwiceIsSafe(t *testing.T) {
 	resetState(t)
-	Configure(t.TempDir(), "127.0.0.1:0", "lanbox-test", "test")
+	Configure(t.TempDir(), "127.0.0.1:0", "lanbox-test", "test", "192.168.1.23")
 	if err := Start(); err != nil {
 		t.Fatal(err)
 	}
