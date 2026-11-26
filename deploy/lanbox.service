@@ -1,0 +1,25 @@
+[Unit]
+Description=lanbox 内外网共享中转站
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 建议专用低权限用户；数据目录与二进制需对该用户可读可执行
+User=lanbox
+Group=lanbox
+WorkingDirectory=/opt/lanbox
+ExecStart=/opt/lanbox/lanbox -config /etc/lanbox/config.json
+Restart=always
+RestartSec=3
+# 首次启动会打印随机 admin 密码到 journal，用 journalctl -u lanbox -n 30 查看
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/lanbox
+
+[Install]
+WantedBy=multi-user.target
