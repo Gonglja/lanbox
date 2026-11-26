@@ -41,10 +41,10 @@ func main() {
 
 	err = wails.Run(&options.App{
 		Title:            "lanbox",
-		Width:            1000,
+		Width:            760,
 		Height:           720,
-		MinWidth:         880,
-		MinHeight:        560,
+		MinWidth:         600,
+		MinHeight:        520,
 		BackgroundColour: &options.RGBA{R: 250, G: 250, B: 250, A: 1},
 		AssetServer:      &assetserver.Options{Assets: sub},
 		OnStartup: func(ctx context.Context) {
