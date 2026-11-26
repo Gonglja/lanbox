@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -921,5 +923,57 @@ func TestDownloadZipRequiresAuth(t *testing.T) {
 	resp, body := e.doWith(t, e.clientNoJar, e.newJSONReq(t, http.MethodGet, "/api/items/anything/zip", nil))
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("未登录应 401，得到 %d %s", resp.StatusCode, body)
+	}
+}
+
+func TestDownloadZipMissingFileIsNotFound(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+	it := e.uploadParts(t, []uploadPart{{field: "files", filename: "a.txt", body: "aaa"}})
+
+	// 绕过 store 直接删掉磁盘文件，模拟磁盘被外部清理。
+	disk, _, err := e.store.FilePath(it.ID, it.Files[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(disk); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, body := e.do(t, e.newJSONReq(t, http.MethodGet, "/api/items/"+it.ID+"/zip", nil))
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("附件缺失应 404，得到 %d %s", resp.StatusCode, body)
+	}
+	if !bytes.Contains(body, []byte("file_missing")) {
+		t.Fatalf("错误码应为 file_missing: %s", body)
+	}
+}
+
+func TestDownloadZipSetsNoStore(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+	it := e.uploadParts(t, []uploadPart{{field: "files", filename: "a.txt", body: "a"}})
+
+	// 走真实 HTTP 时，net/http 会对小体积响应自动补上 Content-Length，
+	// 断言会误报；这里直接调用 handler，只验证它自己没有显式设置该头。
+	u, err := url.Parse(e.srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/items/"+it.ID+"/zip", nil)
+	for _, ck := range e.client.Jar.Cookies(u) {
+		req.AddCookie(ck)
+	}
+	rec := httptest.NewRecorder()
+	e.srv.Config.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("zip 应 200，得到 %d %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control 应为 no-store，得到 %q", got)
+	}
+	if got := rec.Header().Get("Content-Length"); got != "" {
+		t.Fatalf("handler 不应显式设置 Content-Length，得到 %q", got)
 	}
 }
