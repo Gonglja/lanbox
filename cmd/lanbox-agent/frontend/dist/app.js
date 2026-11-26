@@ -47,6 +47,84 @@ function esc(s) {
     .replace(/"/g, '&quot;');
 }
 
+// ---------- 确认框 ----------
+
+// 不用 window.confirm：WebView 的原生弹框不受窗口尺寸约束，比 456 宽的窗口还大。
+// 这里在页面内画一个小卡片（与服务端 Web UI 的对话框同款）。
+let activeDialog = null;
+
+function closeDialog(result) {
+  if (!activeDialog) return;
+  const { root, resolve } = activeDialog;
+  activeDialog = null;
+  root.hidden = true;
+  root.replaceChildren();
+  root.onclick = null;
+  document.removeEventListener('keydown', onDialogKey, true);
+  resolve(result);
+}
+
+function onDialogKey(ev) {
+  if (!activeDialog) return;
+  if (ev.key === 'Escape') {
+    ev.preventDefault();
+    ev.stopPropagation();
+    closeDialog(false);
+  }
+}
+
+// confirmDialog 返回 Promise<boolean>；危险操作的确认按钮用红色。
+function confirmDialog({ title, message, confirmText = '确定', cancelText = '取消', danger = false }) {
+  const root = $('dialog-root');
+  if (!root) return Promise.resolve(false);
+  if (activeDialog) closeDialog(false);
+
+  const dialog = document.createElement('div');
+  dialog.className = 'dialog';
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+  dialog.setAttribute('aria-label', title || '');
+
+  const h = document.createElement('h2');
+  h.className = 'dialog-title';
+  h.textContent = title || '';
+  dialog.append(h);
+
+  if (message) {
+    const p = document.createElement('p');
+    p.className = 'dialog-text';
+    p.textContent = message;
+    dialog.append(p);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'dialog-actions';
+
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'btn btn-sm';
+  cancel.textContent = cancelText;
+  cancel.addEventListener('click', () => closeDialog(false));
+
+  const ok = document.createElement('button');
+  ok.type = 'button';
+  ok.className = 'btn btn-sm ' + (danger ? 'btn-danger' : 'btn-primary');
+  ok.textContent = confirmText;
+  ok.addEventListener('click', () => closeDialog(true));
+
+  actions.append(cancel, ok);
+  dialog.append(actions);
+
+  root.replaceChildren(dialog);
+  root.hidden = false;
+  root.onclick = (ev) => { if (ev.target === root) closeDialog(false); };
+  document.addEventListener('keydown', onDialogKey, true);
+  // 默认聚焦在取消上：回车不会误触危险操作
+  requestAnimationFrame(() => cancel.focus());
+
+  return new Promise((resolve) => { activeDialog = { root, resolve }; });
+}
+
 function fmtSize(n) {
   if (!n) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB'];
@@ -98,7 +176,7 @@ function renderState() {
 function renderRecords() {
   const list = $('records');
   $('records-empty').hidden = records.length > 0;
-  list.innerHTML = records.map((r) => {
+  list.innerHTML = records.map((r, i) => {
     const stCls = r.state === 'ok' ? 'pill pill-ok'
       : (r.state === 'failed' ? 'pill pill-danger'
         : ((r.state === 'uploading' || r.state === 'queued') ? 'pill pill-warn' : 'pill'));
@@ -116,19 +194,72 @@ function renderRecords() {
       r.state === 'uploading' ? (r.progress || 0) + '%' : '',
     ].filter(Boolean).join(' · ');
     return `
-      <li class="record">
+      <li class="record" data-i="${i}">
         <div class="head">
           <span class="pill">${esc(KIND_LABEL[r.kind] || r.kind)}</span>
           <span class="time">${esc(fmtTime(r.at))}</span>
           <span class="${stCls}">${esc(STATE_LABEL[r.state] || r.state)}</span>
           <div class="actions">${actions.join('')}</div>
         </div>
-        <div class="preview">${esc(r.preview || r.text || '（无文本）')}</div>
+        <div class="preview"></div>
         ${progress}
         <div class="foot">${esc(meta)}</div>
         ${r.error ? `<div class="err-msg">${esc(r.error)}</div>` : ''}
       </li>`;
   }).join('');
+  renderRecordTexts();
+}
+
+// ---------- 记录正文：Markdown ----------
+// 正文用与服务端 Web UI 同一份渲染器（markdown.js）画成 DOM，不走 innerHTML。
+// 进度刷新会高频重建整个列表，所以渲染结果按「id + 正文」缓存，命中时只 cloneNode。
+const mdCache = new Map();
+const MD_LIMIT = 8 * 1024;
+
+function mdNode(key, text) {
+  const hit = mdCache.get(key);
+  if (hit) return hit;
+  const box = document.createElement('div');
+  box.className = 'md';
+  let src = text;
+  let clipped = false;
+  if (src.length > MD_LIMIT) {
+    // 在限制附近找一个换行切开，避免把 Markdown 语法从中间截断得太难看
+    const cut = src.lastIndexOf('\n', MD_LIMIT);
+    src = src.slice(0, cut > MD_LIMIT / 2 ? cut : MD_LIMIT);
+    clipped = true;
+  }
+  if (window.renderMarkdown) window.renderMarkdown(box, src);
+  else box.textContent = src;
+  if (clipped) {
+    const hint = document.createElement('p');
+    hint.className = 'hint';
+    hint.textContent = '…（内容过长，预览已截断）';
+    box.append(hint);
+  }
+  mdCache.set(key, box);
+  return box;
+}
+
+function renderRecordTexts() {
+  const list = $('records');
+  const used = new Set();
+  for (const li of list.children) {
+    const r = records[Number(li.getAttribute('data-i'))];
+    const host = li.querySelector('.preview');
+    if (!r || !host) continue;
+    const text = String(r.text || r.preview || '').trim();
+    if (!text) {
+      host.textContent = '（无文本）';
+      continue;
+    }
+    const key = r.id + '\u0000' + text;
+    used.add(key);
+    host.replaceChildren(mdNode(key, text).cloneNode(true));
+  }
+  for (const key of mdCache.keys()) {
+    if (!used.has(key)) mdCache.delete(key);
+  }
 }
 
 function renderFound() {
@@ -171,6 +302,43 @@ function renderPicked() {
 function showLogin() {
   $('login-view').hidden = false;
   $('main-view').hidden = true;
+
+  // 重置登录卡片：不把上一位用户的密码或错误留在屏幕上
+  const pw = $('password');
+  pw.value = '';
+  pw.type = 'password';
+  const toggle = $('toggle-password');
+  toggle.setAttribute('aria-pressed', 'false');
+  toggle.setAttribute('aria-label', '显示密码');
+  toggle.title = '显示密码';
+  $('login-caps').hidden = true;
+  clearLoginErr();
+  // 地址、用户名都齐了就直接光标进密码框
+  const target = !$('url').value.trim() ? $('url')
+    : (! $('username').value.trim() ? $('username') : pw);
+  target.focus();
+}
+
+function clearLoginErr() {
+  $('login-err').textContent = '';
+  $('username').removeAttribute('aria-invalid');
+  $('password').removeAttribute('aria-invalid');
+}
+
+function showLoginErr(message, focusEl) {
+  const el = $('login-err');
+  el.textContent = message || '未知错误';
+  $('login-err').scrollIntoView({ block: 'nearest' });
+  const card = document.querySelector('#login-view .login-card');
+  if (card) {
+    card.classList.remove('is-shake');
+    void card.offsetWidth; // 强制回流，让抖动可以重复播放
+    card.classList.add('is-shake');
+  }
+  if (focusEl) {
+    focusEl.focus();
+    if (focusEl.select) focusEl.select();
+  }
 }
 
 function showMain() {
@@ -239,7 +407,13 @@ async function doPause() {
 }
 
 async function doLogout() {
-  if (!confirm('确定退出登录？本地会话会被删除。')) return;
+  const ok = await confirmDialog({
+    title: '退出登录',
+    message: '本地会话会被删除，剪贴板自动上传会暂停，需要重新登录。',
+    confirmText: '退出登录',
+    danger: true,
+  });
+  if (!ok) return;
   try {
     await call('Logout');
     state = await call('GetState');
@@ -264,6 +438,7 @@ async function doSend() {
     await call('SendManual', text, paths);
     $('msg').value = '';
     autoGrow();
+    refreshPreview();
     picked = [];
     renderPicked();
   } catch (e) {
@@ -302,7 +477,13 @@ async function doRecordAction(act, id) {
     if (act === 'retry') await call('Retry', id);
     if (act === 'cancel') await call('Cancel', id);
     if (act === 'withdraw') {
-      if (!confirm('撤回会同时删除服务器上的这条内容，继续？')) return;
+      const ok = await confirmDialog({
+        title: '撤回这条记录？',
+        message: '撤回会同时删除服务器上的这条内容。',
+        confirmText: '撤回',
+        danger: true,
+      });
+      if (!ok) return;
       await call('Withdraw', id);
       toast('已撤回');
     }
@@ -345,14 +526,20 @@ async function doProbe() {
 }
 
 async function doLogin() {
+  const btn = $('login-btn');
+  if (btn.disabled) return; // 连点 / 回车重入时忽略
   const url = $('url').value.trim();
   const username = $('username').value.trim();
   const password = $('password').value;
   const pin = $('trust').checked ? probedFP : '';
-  $('login-err').textContent = '';
-  if (!url) { $('login-err').textContent = '请填写服务器地址'; return; }
-  if (!username) { $('login-err').textContent = '请填写用户名'; return; }
-  $('login-btn').disabled = true;
+  clearLoginErr();
+  if (!url) { showLoginErr('请填写服务器地址', $('url')); return; }
+  if (!username) { showLoginErr('请填写用户名', $('username')); return; }
+
+  btn.disabled = true;
+  btn.classList.add('is-busy');
+  btn.setAttribute('aria-busy', 'true');
+  btn.textContent = '正在登录…';
   try {
     state = await call('Login', {
       url, username, password,
@@ -364,11 +551,17 @@ async function doLogin() {
     fillSettings(settings);
     renderState();
     renderRecords();
+    $('password').value = '';
     showMain();
   } catch (e) {
-    $('login-err').textContent = errText(e);
+    $('username').setAttribute('aria-invalid', 'true');
+    $('password').setAttribute('aria-invalid', 'true');
+    showLoginErr(errText(e), $('password'));
   } finally {
-    $('login-btn').disabled = false;
+    btn.disabled = false;
+    btn.classList.remove('is-busy');
+    btn.removeAttribute('aria-busy');
+    btn.textContent = '登录';
   }
 }
 
@@ -481,15 +674,82 @@ function autoGrow() {
   el.style.height = Math.min(320, Math.max(168, el.scrollHeight)) + 'px';
 }
 
+// ---------- 发布区 Markdown 预览 ----------
+// 与服务端 Web UI 同一个交互：编辑区下方追加一块只读渲染结果，输入框保持可见。
+
+let previewOpen = false;
+
+function refreshPreview() {
+  const box = $('composer-preview');
+  if (!box) return;
+  const text = $('msg').value;
+  if (!previewOpen || !text.trim()) {
+    box.hidden = true;
+    box.replaceChildren();
+    return;
+  }
+  if (window.renderMarkdown) window.renderMarkdown(box, text);
+  else box.textContent = text;
+  box.hidden = false;
+}
+
+function setPreviewOpen(next) {
+  previewOpen = Boolean(next);
+  const btn = $('btn-md-preview');
+  btn.classList.toggle('is-active', previewOpen);
+  btn.setAttribute('aria-pressed', String(previewOpen));
+  refreshPreview();
+}
+
 function bind() {
   $('pause-btn').addEventListener('click', doPause);
   $('logout-btn').addEventListener('click', doLogout);
   $('send-btn').addEventListener('click', doSend);
   $('pick-files-btn').addEventListener('click', doPickFiles);
   $('pick-folder-btn').addEventListener('click', doPickFolder);
+  $('btn-md-preview').addEventListener('click', () => setPreviewOpen(!previewOpen));
   $('discover-btn').addEventListener('click', doDiscover);
   $('probe-btn').addEventListener('click', doProbe);
   $('login-btn').addEventListener('click', doLogin);
+
+  // 桌面端习惯：任一字段回车即登录
+  for (const id of ['url', 'username', 'password']) {
+    $(id).addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        doLogin();
+      }
+    });
+    $(id).addEventListener('input', clearLoginErr);
+  }
+
+  $('toggle-password').addEventListener('click', () => {
+    const input = $('password');
+    const show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    const btn = $('toggle-password');
+    btn.setAttribute('aria-pressed', String(show));
+    const label = show ? '隐藏密码' : '显示密码';
+    btn.setAttribute('aria-label', label);
+    btn.title = label;
+    input.focus();
+    const end = input.value.length;
+    try {
+      input.setSelectionRange(end, end);
+    } catch (e) {
+      /* 部分环境不支持 */
+    }
+  });
+
+  // 大写锁定是很常见的登录失败原因，直接在密码框下提示
+  const syncCaps = (ev) => {
+    const on = typeof ev.getModifierState === 'function' && ev.getModifierState('CapsLock');
+    $('login-caps').hidden = !on;
+  };
+  $('password').addEventListener('keydown', syncCaps);
+  $('password').addEventListener('keyup', syncCaps);
+  $('password').addEventListener('blur', () => { $('login-caps').hidden = true; });
+
   $('save-settings-btn').addEventListener('click', doSaveSettings);
   $('theme-btn').addEventListener('click', (ev) => {
     ev.stopPropagation();
@@ -522,7 +782,10 @@ function bind() {
     doRecordAction(btn.dataset.act, btn.dataset.id);
   });
 
-  $('msg').addEventListener('input', autoGrow);
+  $('msg').addEventListener('input', () => {
+    autoGrow();
+    refreshPreview();
+  });
   $('msg').addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
       ev.preventDefault();
@@ -574,6 +837,7 @@ function subscribe() {
 // ---------- 启动 ----------
 
 async function boot() {
+  if (window.fillIcons) window.fillIcons(); // data-icon → 真实 SVG（与 web 同一套图标）
   initTheme();
   bind();
   subscribe();

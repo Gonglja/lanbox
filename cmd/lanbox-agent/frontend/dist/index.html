@@ -11,14 +11,17 @@
 
 <!-- ============ 登录 ============ -->
 <section id="login-view" class="login" hidden>
+  <div class="login-bg" aria-hidden="true"></div>
   <div class="login-card">
-    <div class="brand brand-lg">
-      <span class="brand-mark" aria-hidden="true"></span>
-      <span class="brand-name">lanbox</span>
+    <div class="login-head">
+      <div class="brand brand-lg">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">lanbox</span>
+      </div>
+      <p class="hint center">局域网文件与消息 · Windows 客户端</p>
     </div>
-    <p class="hint center">局域网文件与消息 · Windows 客户端</p>
 
-    <div class="row gap" style="margin-top: var(--space-3)">
+    <div class="row gap login-discover">
       <button id="discover-btn" class="btn btn-sm">发现局域网服务器</button>
       <span id="discover-status" class="hint"></span>
     </div>
@@ -37,22 +40,29 @@
       <span>信任该证书指纹（自签证书需要；从发现列表选择时会自动填入）</span>
     </label>
 
-    <label class="field">
-      <span class="field-label">用户名</span>
-      <input id="username" type="text" autocomplete="username" spellcheck="false">
-    </label>
-    <label class="field">
-      <span class="field-label">密码</span>
-      <input id="password" type="password" autocomplete="current-password">
-    </label>
+    <div class="field">
+      <label class="field-label" for="username">用户名</label>
+      <input id="username" type="text" autocomplete="username" spellcheck="false" autocapitalize="off">
+    </div>
+    <div class="field">
+      <label class="field-label" for="password">密码</label>
+      <span class="field-control">
+        <input id="password" type="password" autocomplete="current-password">
+        <button id="toggle-password" class="btn btn-icon field-toggle" type="button"
+                aria-label="显示密码" aria-pressed="false" title="显示密码">
+          <span class="icon" data-icon="eye"></span>
+        </button>
+      </span>
+    </div>
+    <p id="login-caps" class="hint login-caps" hidden>大写锁定已开启</p>
     <label class="check">
       <input id="remember" type="checkbox" checked>
-      <span>记住密码（Windows DPAPI 加密，仅当前用户可解密）</span>
+      <span>记住密码（DPAPI 加密，仅当前用户可解密）</span>
     </label>
 
-    <button id="login-btn" class="btn btn-primary btn-block" style="margin-top: var(--space-3)">登录</button>
-    <p id="login-err" class="err"></p>
-    <p class="hint">已在本机用过 <code>lanbox-cli</code> 登录的话，客户端会直接复用同一个会话。</p>
+    <button id="login-btn" class="btn btn-primary btn-block login-submit">登录</button>
+    <p id="login-err" class="err" role="alert" aria-live="assertive"></p>
+    <p class="hint login-tip">已在本机用过 <code>lanbox-cli</code> 登录的话，客户端会直接复用同一个会话。</p>
   </div>
 </section>
 
@@ -67,7 +77,7 @@
     <span id="user-label"></span>
     <span id="version-label"></span>
     <div class="topbar-actions">
-      <button id="theme-btn" class="btn btn-sm btn-icon" title="外观" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 2.2a5.8 5.8 0 1 0 0 11.6c.9 0 1.4-.6 1.4-1.3 0-.4-.2-.7-.4-1-.2-.2-.3-.4-.3-.7 0-.5.4-.9 1-.9h1.1A3.4 3.4 0 0 0 14 6.6C14 4.1 11.3 2.2 8 2.2Z"/><circle cx="5.4" cy="6" r=".85" fill="currentColor" stroke="none"/><circle cx="8" cy="4.8" r=".85" fill="currentColor" stroke="none"/><circle cx="10.6" cy="6.2" r=".85" fill="currentColor" stroke="none"/></svg></button>
+      <button id="theme-btn" class="btn btn-sm btn-icon" title="外观" aria-haspopup="menu" aria-expanded="false"><span class="icon" data-icon="palette"></span></button>
       <button id="pause-btn" class="btn btn-sm">暂停</button>
       <button id="logout-btn" class="btn btn-sm btn-ghost" title="退出登录">退出</button>
     </div>
@@ -80,10 +90,19 @@
 
   <main id="pane-records" class="pane">
     <div class="composer">
-      <textarea id="msg" class="composer-input" placeholder="输入要发送的消息…（Ctrl+Enter 发送）"></textarea>
+      <textarea id="msg" class="composer-input" placeholder="写点什么（支持 Markdown），或选文件…（Ctrl+Enter 发送）"></textarea>
+      <div id="composer-preview" class="composer-preview" hidden></div>
       <div class="composer-bar">
-        <button id="pick-files-btn" class="btn btn-sm">选择文件</button>
-        <button id="pick-folder-btn" class="btn btn-sm">选择文件夹</button>
+        <button id="pick-files-btn" class="btn btn-icon" type="button" title="选择文件" aria-label="选择文件">
+          <span class="icon" data-icon="paperclip"></span>
+        </button>
+        <button id="pick-folder-btn" class="btn btn-icon" type="button" title="选择文件夹" aria-label="选择文件夹">
+          <span class="icon" data-icon="folder"></span>
+        </button>
+        <button id="btn-md-preview" class="btn btn-icon" type="button" title="Markdown 预览"
+                aria-label="Markdown 预览" aria-pressed="false">
+          <span class="icon" data-icon="eye"></span>
+        </button>
         <span class="spacer"></span>
         <button id="send-btn" class="btn btn-primary">发送</button>
       </div>
@@ -146,22 +165,25 @@
 
 <div id="theme-menu" class="menu" role="menu" aria-label="外观主题" hidden>
   <button type="button" role="menuitemradio" data-theme-value="system" aria-checked="false">
-    <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="5.6"/><path d="M8 2.4v11.2" /><path d="M8 2.4a5.6 5.6 0 0 1 0 11.2Z" fill="currentColor" stroke="none"/></svg></span><span>跟随系统</span><span class="icon menu-check"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3.4 8.4l3 3 6.2-6.6"/></svg></span>
+    <span class="icon" data-icon="auto"></span><span>跟随系统</span><span class="icon menu-check" data-icon="check"></span>
   </button>
   <button type="button" role="menuitemradio" data-theme-value="light" aria-checked="false">
-    <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="3"/><path d="M8 1.3v1.6M8 13.1v1.6M1.3 8h1.6M13.1 8h1.6M3.3 3.3l1.1 1.1M11.6 11.6l1.1 1.1M12.7 3.3l-1.1 1.1M4.4 11.6l-1.1 1.1"/></svg></span><span>亮色</span><span class="icon menu-check"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3.4 8.4l3 3 6.2-6.6"/></svg></span>
+    <span class="icon" data-icon="sun"></span><span>亮色</span><span class="icon menu-check" data-icon="check"></span>
   </button>
   <button type="button" role="menuitemradio" data-theme-value="dark" aria-checked="false">
-    <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8Z"/></svg></span><span>暗色</span><span class="icon menu-check"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3.4 8.4l3 3 6.2-6.6"/></svg></span>
+    <span class="icon" data-icon="moon"></span><span>暗色</span><span class="icon menu-check" data-icon="check"></span>
   </button>
   <button type="button" role="menuitemradio" data-theme-value="paper" aria-checked="false">
-    <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M3.4 2.2h6.2l3 3v8.6H3.4z"/><path d="M9.4 2.4v3.1h3"/><path d="M5.4 8.4h5.2M5.4 10.8h5.2"/></svg></span><span>纸张</span><span class="icon menu-check"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3.4 8.4l3 3 6.2-6.6"/></svg></span>
+    <span class="icon" data-icon="paper"></span><span>纸张</span><span class="icon menu-check" data-icon="check"></span>
   </button>
 </div>
 
 <div id="toast" class="toast" hidden></div>
+<div id="dialog-root" class="mask" hidden></div>
 <div id="drop-overlay" class="drop-overlay" hidden><span>松开鼠标即可上传</span></div>
 
+<script src="/icons.js"></script>
+<script src="/markdown.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>
