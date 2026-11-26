@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/cookiejar"
@@ -211,4 +212,55 @@ func TestUpdateDisabledWhenNoRestart(t *testing.T) {
 			t.Fatalf("%s 不可重启时应 501，得到 %d %s", path, resp.StatusCode, body)
 		}
 	}
+}
+
+func TestUpdateConfigViaWebAPI(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+
+	_, body := e.do(t, e.newJSONReq(t, http.MethodGet, "/api/config", nil))
+	var got struct {
+		Values   map[string]any    `json:"values"`
+		Origins  map[string]string `json:"origins"`
+		Editable []string          `json:"editable"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("解析配置响应: %v", err)
+	}
+	if got.Origins["update.check"] != "default" {
+		t.Fatalf("默认来源不对: %v", got.Origins["update.check"])
+	}
+	if !contains(got.Editable, "update.check") || !contains(got.Editable, "update.url") {
+		t.Fatalf("更新配置不在可编辑列表里: %v", got.Editable)
+	}
+
+	got.Values["update"] = map[string]any{"check": "startup", "url": "https://example.com/latest.json"}
+	resp, body := e.do(t, e.newJSONReq(t, http.MethodPut, "/api/config", map[string]any{"values": got.Values}))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("保存配置失败: %d %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "update.check") {
+		t.Fatalf("变更列表里没有 update.check: %s", body)
+	}
+
+	_, body = e.do(t, e.newJSONReq(t, http.MethodGet, "/api/config", nil))
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	upd, _ := got.Values["update"].(map[string]any)
+	if upd["check"] != "startup" || upd["url"] != "https://example.com/latest.json" {
+		t.Fatalf("更新配置没生效: %+v", upd)
+	}
+	if got.Origins["update.check"] != "web" {
+		t.Fatalf("来源应为 web: %v", got.Origins["update.check"])
+	}
+}
+
+func contains(list []string, want string) bool {
+	for _, s := range list {
+		if s == want {
+			return true
+		}
+	}
+	return false
 }
