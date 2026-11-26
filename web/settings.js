@@ -28,6 +28,23 @@ const GROUPS = [
     fields: [{ key: 'session_ttl_hours', label: '会话有效期', unit: '小时', min: 1, step: 1 }],
   },
   {
+    title: '在线更新',
+    fields: [
+      {
+        key: 'update.check',
+        label: '自动检查',
+        type: 'text',
+        hint: 'off / startup / daily，默认 daily；只提示，不会自动升级',
+      },
+      {
+        key: 'update.url',
+        label: '更新源',
+        type: 'text',
+        hint: '留空用 GitHub Release；以 .json 结尾则读取该清单地址',
+      },
+    ],
+  },
+  {
     title: '局域网发现',
     fields: [
       { key: 'mdns.enabled', label: '启用 mDNS 通告', type: 'bool' },

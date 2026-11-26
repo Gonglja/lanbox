@@ -2,13 +2,15 @@
 import { api } from './api.js';
 import { fmtBytes } from './render.js';
 import { fillURLOptions, renderQR } from './connect.js';
-import { openPanel } from './ui.js';
+import { openPanel, confirmDialog, toast } from './ui.js';
 
 const $ = (id) => document.getElementById(id);
 const REFRESH_MS = 5000;
 
 let timer = 0;
 let inFlight = false;
+// upd 是 GET /api/update 的缓存；null 表示这台服务端不支持/拿不到。
+let upd = null;
 
 // fmtUptime 与 CLI status 的输出保持一致：3d4h / 5h6m / 7m / 8s。
 function fmtUptime(sec) {
@@ -77,12 +79,15 @@ function note(text) {
 }
 
 function render(st) {
+  const serviceRows = [
+    ['版本', st.version || '未知'],
+    ['运行时长', fmtUptime(st.uptime_s)],
+    ['当前地址', location.origin],
+  ];
+  if (st.admin) serviceRows.push(['最新版本', updateText()]);
+
   const nodes = [
-    card('服务', [
-      ['版本', st.version || '未知'],
-      ['运行时长', fmtUptime(st.uptime_s)],
-      ['当前地址', location.origin],
-    ]),
+    card('服务', serviceRows),
     card('内容', [
       ['全部', `${st.items.total} 条`],
       ['未取走', `${st.items.todo} 条`],
@@ -105,11 +110,150 @@ function render(st) {
         ['mDNS', mdnsText(st.admin.mdns)],
       ]),
     );
+    nodes.push(updateCard(st));
   } else {
-    nodes.push(note('磁盘、用户与 mDNS 状态仅管理员可见。'));
+    nodes.push(note('磁盘、用户、mDNS 与在线更新仅管理员可见。'));
   }
 
   $('status-cards').replaceChildren(...nodes);
+}
+
+// updateText 把更新状态压成一行。
+function updateText() {
+  if (!upd || !upd.supported) return '不支持在线更新';
+  if (upd.updating) return `升级中 ${upd.progress || 0}%`;
+  if (upd.check_error) return `检查失败：${upd.check_error}`;
+  if (upd.pending) return `${upd.pending}（已替换，等待重启生效）`;
+  if (upd.available) {
+    const size = upd.size ? `（${fmtBytes(upd.size)}）` : '';
+    return `${upd.latest} 可用${size}`;
+  }
+  if (upd.latest) return `已是最新（${upd.latest}）`;
+  return '还没有检查过';
+}
+
+function fmtTime(v) {
+  if (!v) return '未知';
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return '未知';
+  return d.toLocaleString();
+}
+
+// actionButton 造一个带点击处理的按钮。
+function actionButton(label, cls, onClick) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = cls;
+  b.textContent = label;
+  b.addEventListener('click', async () => {
+    b.disabled = true;
+    try {
+      await onClick();
+    } finally {
+      b.disabled = false;
+    }
+  });
+  return b;
+}
+
+// updateCard 渲染「在线更新」卡片：状态 + 检查/升级/回滚。
+async function updateCard(st) {
+  const box = document.createElement('section');
+  box.className = 'status-card';
+  const h = document.createElement('h3');
+  h.className = 'status-card-title';
+  h.textContent = '在线更新';
+  const list = document.createElement('dl');
+  list.className = 'status-list';
+  list.append(row('当前版本', (upd && upd.current) || st.version || '未知', { mono: true }));
+  list.append(row('最新版本', updateText(), { error: Boolean(upd && upd.check_error) }));
+  if (upd && upd.checked_at) list.append(row('上次检查', fmtTime(upd.checked_at)));
+  box.append(h, list);
+
+  if (!upd || !upd.supported) {
+    box.append(note('这台服务端没有开启在线更新（Android 或自编译版本）。'));
+    return box;
+  }
+  if (upd.notes && upd.available) {
+    const p = document.createElement('p');
+    p.className = 'status-note';
+    p.textContent = upd.notes;
+    box.append(p);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'status-actions';
+  actions.append(
+    actionButton('检查更新', 'btn btn-sm', async () => {
+      try {
+        upd = await api.checkUpdate();
+        toast('检查完成', 'ok');
+      } catch (e) {
+        toast(e.message || String(e), 'error');
+      }
+      await refreshStatus();
+    }),
+  );
+
+  if (upd.available && !upd.updating) {
+    actions.append(
+      actionButton(`升级到 ${upd.latest} 并重启`, 'btn btn-sm btn-primary', async () => {
+        const ok = await confirmDialog({
+          title: '升级 lanbox',
+          message: `将下载 ${upd.latest}${upd.size ? `（${fmtBytes(upd.size)}）` : ''}，替换当前程序后自动重启。进行中的上传会中断。`,
+          confirmText: '升级并重启',
+        });
+        if (!ok) return;
+        try {
+          upd = await api.applyUpdate(upd.latest);
+          toast('已替换，服务正在重启…', 'ok');
+          waitRestart();
+        } catch (e) {
+          toast(e.message || String(e), 'error');
+        }
+        await refreshStatus();
+      }),
+    );
+  }
+  if (upd.can_rollback && !upd.updating) {
+    actions.append(
+      actionButton('回滚到上一版本', 'btn btn-sm btn-danger', async () => {
+        const ok = await confirmDialog({
+          title: '回滚',
+          message: '把上一次升级前的程序换回来，然后重启服务。',
+          confirmText: '回滚并重启',
+          danger: true,
+        });
+        if (!ok) return;
+        try {
+          upd = await api.rollbackUpdate();
+          toast('已回滚，服务正在重启…', 'ok');
+          waitRestart();
+        } catch (e) {
+          toast(e.message || String(e), 'error');
+        }
+        await refreshStatus();
+      }),
+    );
+  }
+  if (actions.childElementCount) box.append(actions);
+  return box;
+}
+
+// waitRestart 轮询 /api/healthz，服务回来后刷新页面状态。
+async function waitRestart() {
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    try {
+      await api.healthz();
+      toast('服务已恢复', 'ok');
+      await refreshStatus();
+      return;
+    } catch {
+      // 还在重启，继续等
+    }
+  }
+  toast('服务还没回来，请手动刷新或检查日志', 'error');
 }
 
 function stamp() {
@@ -124,6 +268,14 @@ export async function refreshStatus() {
   const err = $('status-error');
   try {
     const st = await api.stats();
+    // 管理员才需要更新状态；拿不到（501/离线）时按不支持处理。
+    if (st.admin) {
+      try {
+        upd = await api.update();
+      } catch {
+        upd = null;
+      }
+    }
     render(st);
     err.hidden = true;
     $('status-hint').textContent = `更新于 ${stamp()} · 每 5 秒自动刷新`;

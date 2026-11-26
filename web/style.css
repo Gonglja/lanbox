@@ -2505,3 +2505,11 @@ body.admin-open #btn-account {
     width: auto;
   }
 }
+
+/* 状态页「在线更新」卡片底部按钮 */
+.status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 16px 16px;
+}
