@@ -83,6 +83,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = cmdWhoami(ctx, g, cmdArgs)
 	case "status":
 		err = cmdStatus(ctx, g, cmdArgs)
+	case "update":
+		err = cmdUpdate(ctx, g, cmdArgs, os.Stdin)
 	case "discover":
 		err = cmdDiscover(g, cmdArgs)
 	case "put":
@@ -191,6 +193,8 @@ func usage(w io.Writer) {
   logout [--json]          注销并删除本地会话
   whoami                   显示当前身份
   status                   查看服务、内容统计（管理员含磁盘/用户/mDNS）
+  update [--check|--apply|--rollback] [--yes]
+                           查看/检查/执行在线更新（升级与回滚需要管理员）
   discover [-timeout 2s]   列出局域网内的 lanbox 实例（-json 输出机器可读）
   put [-m 文本] [-r] 路径…  发布文字/文件/目录（- 表示从 stdin 读文本）
   ls [-n 数量] [-q 关键词] [--todo] [-o]  列出内容（-o 同时打印附件）

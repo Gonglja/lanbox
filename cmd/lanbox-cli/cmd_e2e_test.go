@@ -36,7 +36,7 @@ type cmdEnv struct {
 
 // newCmdEnv 起一个 TLS 测试服务端，把自签证书写到文件供 -ca 使用，
 // 并保存登录会话，返回可直接调用 cmdXxx 的 globals。
-func newCmdEnv(t *testing.T) *cmdEnv {
+func newCmdEnv(t *testing.T, opts ...func(*httpapi.Options)) *cmdEnv {
 	t.Helper()
 	cfg := config.Defaults()
 	cfg.DataDir = t.TempDir()
@@ -63,9 +63,13 @@ func newCmdEnv(t *testing.T) *cmdEnv {
 	if err != nil {
 		t.Fatalf("初始化管理员失败: %v", err)
 	}
-	srv := httptest.NewTLSServer(httpapi.New(httpapi.Options{
+	srvOpts := httpapi.Options{
 		Cfg: cfg, Store: st, Auth: am, Web: lanbox.WebFS(), Log: log.New(io.Discard, "", 0),
-	}))
+	}
+	for _, opt := range opts {
+		opt(&srvOpts)
+	}
+	srv := httptest.NewTLSServer(httpapi.New(srvOpts))
 	t.Cleanup(srv.Close)
 
 	// 自签证书落盘，正好验证 -ca 的信任路径。
