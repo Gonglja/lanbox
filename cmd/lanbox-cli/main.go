@@ -45,6 +45,8 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
 func run(args []string, stdout, stderr io.Writer) int {
 	g := &globals{stdout: stdout, stderr: stderr}
+	// 全局选项允许写在子命令后面，先挑出来再解析。
+	globalArgs, rest := splitGlobals(args)
 	fs := flag.NewFlagSet("lanbox-cli", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&g.server, "s", "", "服务地址，如 https://192.168.1.9:8443")
@@ -52,10 +54,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&g.insecure, "insecure", false, "跳过 TLS 证书校验（不安全）")
 	fs.StringVar(&g.caFile, "ca", "", "信任指定的 PEM 证书文件")
 	fs.BoolVar(&g.verbose, "v", false, "打印请求细节")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(globalArgs); err != nil {
 		return exitUsage
 	}
-	rest := fs.Args()
 	if len(rest) == 0 {
 		usage(stderr)
 		return exitUsage
@@ -71,6 +72,20 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = cmdLogout(ctx, g)
 	case "whoami":
 		err = cmdWhoami(ctx, g)
+	case "put":
+		err = cmdPut(ctx, g, cmdArgs, os.Stdin)
+	case "ls":
+		err = cmdLs(ctx, g, cmdArgs)
+	case "files":
+		err = cmdFiles(ctx, g, cmdArgs)
+	case "get":
+		err = cmdGet(ctx, g, cmdArgs)
+	case "taken":
+		err = cmdTaken(ctx, g, cmdArgs)
+	case "rm":
+		err = cmdRm(ctx, g, cmdArgs)
+	case "rm-file":
+		err = cmdRmFile(ctx, g, cmdArgs)
 	case "help", "-h", "--help":
 		usage(stdout)
 		return exitOK
