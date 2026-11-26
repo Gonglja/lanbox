@@ -25,6 +25,8 @@ var (
 	ErrNoSpace      = errors.New("磁盘空间不足")
 	ErrTooManyFiles = errors.New("附件数量超过上限")
 	ErrTextTooLong  = errors.New("文本超过长度上限")
+	ErrBadPath      = errors.New("附件路径不合法")
+	ErrItemTooLarge = errors.New("内容总大小超过上限")
 )
 
 // MaxFilesPerItem 是单条内容的附件数量上限。
