@@ -1,6 +1,7 @@
 package httpapi_test
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
@@ -381,5 +382,144 @@ func TestItemRequiresAuth(t *testing.T) {
 	resp, _ := e.doWith(t, e.clientNoJar, e.newJSONReq(t, http.MethodGet, "/api/items", nil))
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("未登录访问内容应 401，得到 %d", resp.StatusCode)
+	}
+}
+
+func TestDownloadStreamsAndCounts(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+
+	content := []byte(strings.Repeat("download-me-", 2000))
+	e.upload(t, "下载测试", map[string][]byte{"中文 名称.bin": content})
+
+	_, body := e.do(t, e.newJSONReq(t, http.MethodGet, "/api/items", nil))
+	var list struct {
+		Items []store.Item `json:"items"`
+	}
+	if err := json.Unmarshal(body, &list); err != nil {
+		t.Fatal(err)
+	}
+	it := list.Items[0]
+	f := it.Files[0]
+
+	req, _ := http.NewRequest(http.MethodGet, e.srv.URL+"/api/items/"+it.ID+"/files/"+f.ID, nil)
+	resp, got := e.do(t, req)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("下载应 200，得到 %d %s", resp.StatusCode, got)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatal("下载内容与上传不一致")
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/octet-stream" {
+		t.Fatalf("Content-Type 应为 octet-stream，得到 %q", ct)
+	}
+	cd := resp.Header.Get("Content-Disposition")
+	if !strings.HasPrefix(cd, "attachment;") || !strings.Contains(cd, "filename*=UTF-8''") {
+		t.Fatalf("Content-Disposition 不对: %q", cd)
+	}
+
+	// Range 支持
+	req, _ = http.NewRequest(http.MethodGet, e.srv.URL+"/api/items/"+it.ID+"/files/"+f.ID, nil)
+	req.Header.Set("Range", "bytes=0-9")
+	resp, part := e.do(t, req)
+	if resp.StatusCode != http.StatusPartialContent {
+		t.Fatalf("Range 请求应 206，得到 %d", resp.StatusCode)
+	}
+	if !bytes.Equal(part, content[:10]) {
+		t.Fatalf("Range 内容不对: %q", part)
+	}
+
+	req, _ = http.NewRequest(http.MethodGet, e.srv.URL+"/api/items/"+it.ID+"/files/fdoesnotexist", nil)
+	resp, _ = e.do(t, req)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("不存在的文件应 404，得到 %d", resp.StatusCode)
+	}
+
+	// 下载计数应累加（含 Range 那次）
+	_, body = e.do(t, e.newJSONReq(t, http.MethodGet, "/api/items/"+it.ID, nil))
+	after := decodeItem(t, body)
+	if after.Files[0].Downloads != 2 {
+		t.Fatalf("下载计数应为 2，得到 %d", after.Files[0].Downloads)
+	}
+}
+
+func TestDeleteSingleFile(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+	e.upload(t, "两个附件", map[string][]byte{"a.txt": []byte("aaa"), "b.txt": []byte("bbb")})
+
+	_, body := e.do(t, e.newJSONReq(t, http.MethodGet, "/api/items", nil))
+	var list struct {
+		Items []store.Item `json:"items"`
+	}
+	if err := json.Unmarshal(body, &list); err != nil {
+		t.Fatal(err)
+	}
+	it := list.Items[0]
+	if len(it.Files) != 2 {
+		t.Fatalf("应有 2 个附件: %+v", it.Files)
+	}
+	resp, _ := e.do(t, e.newJSONReq(t, http.MethodDelete, "/api/items/"+it.ID+"/files/"+it.Files[0].ID, nil))
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("删除附件应 204，得到 %d", resp.StatusCode)
+	}
+	_, body = e.do(t, e.newJSONReq(t, http.MethodGet, "/api/items/"+it.ID, nil))
+	after := decodeItem(t, body)
+	if len(after.Files) != 1 {
+		t.Fatalf("应剩 1 个附件: %+v", after.Files)
+	}
+}
+
+func TestSSEPushesEvents(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+
+	req, _ := http.NewRequest(http.MethodGet, e.srv.URL+"/api/events", nil)
+	resp, err := e.client.Do(req)
+	if err != nil {
+		t.Fatalf("连接 SSE 失败: %v", err)
+	}
+	defer resp.Body.Close()
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("SSE Content-Type 不对: %q", ct)
+	}
+
+	type sseEvent struct{ name, data string }
+	events := make(chan sseEvent, 16)
+	go func() {
+		sc := bufio.NewScanner(resp.Body)
+		var cur sseEvent
+		for sc.Scan() {
+			line := sc.Text()
+			switch {
+			case strings.HasPrefix(line, "event: "):
+				cur.name = strings.TrimPrefix(line, "event: ")
+			case strings.HasPrefix(line, "data: "):
+				cur.data = strings.TrimPrefix(line, "data: ")
+			case line == "":
+				if cur.name != "" {
+					events <- cur
+				}
+				cur = sseEvent{}
+			}
+		}
+		close(events)
+	}()
+
+	// 等订阅在服务端建立（Do 返回时响应头已发出，订阅紧随其后）
+	time.Sleep(100 * time.Millisecond)
+	deadline := time.After(3 * time.Second)
+	e.upload(t, "实时推送", nil)
+
+	select {
+	case ev, ok := <-events:
+		if !ok {
+			t.Fatal("SSE 连接被关闭")
+		}
+		if ev.name != "item.created" || !strings.Contains(ev.data, "实时推送") {
+			t.Fatalf("事件内容不对: %+v", ev)
+		}
+	case <-deadline:
+		t.Fatal("3 秒内未收到 SSE 事件")
 	}
 }
