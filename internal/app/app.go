@@ -244,8 +244,11 @@ func (a *App) Start() error {
 		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 	a.running = true
+	// 用局部变量：Shutdown 会把 a.httpSrv 置 nil，而 goroutine 可能在其后才被调度，
+	// 直接读 a.httpSrv 会遇到 nil *http.Server（Linux 上 TestStartStopReleasesPort 就这么炸的）。
+	srv := a.httpSrv
 	go func() {
-		err := a.httpSrv.ServeTLS(ln, a.certPath, a.keyPath)
+		err := srv.ServeTLS(ln, a.certPath, a.keyPath)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			a.mu.Lock()
 			a.running = false
