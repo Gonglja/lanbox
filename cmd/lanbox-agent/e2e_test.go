@@ -50,9 +50,14 @@ func TestAgentE2E(t *testing.T) {
 		Settings:    settings.agentSettings(),
 		HistorySize: 20,
 		Classify:    classify,
-		OnRecords:   func(r []agent.Record) { select { case records <- r: default: } },
-		Logger:      t.Logf,
-		Debounce:    -1,
+		OnRecords: func(r []agent.Record) {
+			select {
+			case records <- r:
+			default:
+			}
+		},
+		Logger:   t.Logf,
+		Debounce: -1,
 	})
 	defer mgr.Close()
 	mgr.SetAvailable(true)

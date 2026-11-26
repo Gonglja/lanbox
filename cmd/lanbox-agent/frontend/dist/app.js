@@ -86,6 +86,7 @@ function renderState() {
   $('server-label').textContent = state.server || '未登录';
   $('user-label').textContent = state.username ? '· ' + state.username : '';
   $('pause-btn').textContent = state.paused ? '恢复' : '暂停';
+  $('logout-btn').title = state.username ? '退出登录（' + state.username + '）' : '退出登录';
   $('queue-label').textContent = state.queue > 0
     ? (state.active > 0 ? '上传中 ' + state.active + ' 个，排队 ' + (state.queue - state.active) + ' 个' : '排队 ' + state.queue + ' 个')
     : '';
@@ -98,7 +99,9 @@ function renderRecords() {
   const list = $('records');
   $('records-empty').hidden = records.length > 0;
   list.innerHTML = records.map((r) => {
-    const stCls = r.state === 'ok' ? 'ok' : (r.state === 'failed' ? 'err' : (r.state === 'canceled' || r.state === 'withdrawn' ? '' : 'warn'));
+    const stCls = r.state === 'ok' ? 'pill pill-ok'
+      : (r.state === 'failed' ? 'pill pill-danger'
+        : ((r.state === 'uploading' || r.state === 'queued') ? 'pill pill-warn' : 'pill'));
     const actions = [];
     if (r.state === 'failed') actions.push(`<button class="link-btn" data-act="retry" data-id="${esc(r.id)}">重试</button>`);
     if (r.state === 'uploading' || r.state === 'queued') actions.push(`<button class="link-btn" data-act="cancel" data-id="${esc(r.id)}">取消</button>`);
@@ -115,14 +118,14 @@ function renderRecords() {
     return `
       <li class="record">
         <div class="head">
-          <span class="kind">${esc(KIND_LABEL[r.kind] || r.kind)}</span>
+          <span class="pill">${esc(KIND_LABEL[r.kind] || r.kind)}</span>
           <span class="time">${esc(fmtTime(r.at))}</span>
-          <span class="state ${stCls}">${esc(STATE_LABEL[r.state] || r.state)}</span>
+          <span class="${stCls}">${esc(STATE_LABEL[r.state] || r.state)}</span>
           <div class="actions">${actions.join('')}</div>
         </div>
         <div class="preview">${esc(r.preview || r.text || '（无文本）')}</div>
         ${progress}
-        <div class="foot muted small">${esc(meta)}</div>
+        <div class="foot">${esc(meta)}</div>
         ${r.error ? `<div class="err-msg">${esc(r.error)}</div>` : ''}
       </li>`;
   }).join('');
@@ -137,7 +140,7 @@ function renderFound() {
   ul.innerHTML = found.map((f, i) => `
     <li data-i="${i}">
       <span class="name">${esc(f.instance)}</span>
-      <span class="muted small">${esc(f.url || f.host || '')}</span>
+      <span class="url">${esc(f.url || f.host || '')}</span>
       <span class="fp">${esc((f.fp || '').slice(0, 16))}</span>
     </li>`).join('');
   ul.querySelectorAll('li').forEach((li) => {
@@ -260,6 +263,7 @@ async function doSend() {
   try {
     await call('SendManual', text, paths);
     $('msg').value = '';
+    autoGrow();
     picked = [];
     renderPicked();
   } catch (e) {
@@ -388,6 +392,12 @@ async function doSaveSettings() {
 
 // ---------- 事件绑定 ----------
 
+function autoGrow() {
+  const el = $('msg');
+  el.style.height = 'auto';
+  el.style.height = Math.min(320, Math.max(168, el.scrollHeight)) + 'px';
+}
+
 function bind() {
   $('pause-btn').addEventListener('click', doPause);
   $('logout-btn').addEventListener('click', doLogout);
@@ -411,6 +421,7 @@ function bind() {
     doRecordAction(btn.dataset.act, btn.dataset.id);
   });
 
+  $('msg').addEventListener('input', autoGrow);
   $('msg').addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
       ev.preventDefault();
@@ -471,6 +482,7 @@ async function boot() {
     fillSettings(settings);
     renderState();
     renderRecords();
+    autoGrow();
     if (state.logged_in) {
       showMain();
     } else {

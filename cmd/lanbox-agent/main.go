@@ -40,11 +40,11 @@ func main() {
 	}
 
 	err = wails.Run(&options.App{
-		Title:            "lanbox",
-		Width:            760,
+		Title: "lanbox",
+		// 固定尺寸窗口：禁用缩放后系统只保留最小化与关闭按钮。
+		Width:            456,
 		Height:           720,
-		MinWidth:         600,
-		MinHeight:        520,
+		DisableResize:    true,
 		BackgroundColour: &options.RGBA{R: 250, G: 250, B: 250, A: 1},
 		AssetServer:      &assetserver.Options{Assets: sub},
 		OnStartup: func(ctx context.Context) {

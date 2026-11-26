@@ -49,10 +49,10 @@ type ServerSettings struct {
 
 // Settings 是 agent.json 的结构。
 type Settings struct {
-	Version   int             `json:"version"`
-	Clipboard UIClipSettings  `json:"clipboard"`
-	App       UIAppSettings   `json:"app"`
-	Server    ServerSettings  `json:"server"`
+	Version   int            `json:"version"`
+	Clipboard UIClipSettings `json:"clipboard"`
+	App       UIAppSettings  `json:"app"`
+	Server    ServerSettings `json:"server"`
 }
 
 // defaultSettings 返回带默认值的配置。
