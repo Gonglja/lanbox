@@ -275,7 +275,9 @@ func (a *App) Start() error {
 	srv := a.httpSrv
 	go func() {
 		err := srv.ServeTLS(ln, a.certPath, a.keyPath)
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		// Shutdown 会主动关监听：Serve 还没把 ln 注册到 http.Server 时，
+		// 关监听是唯一的退出方式，那种“连接已关闭”的错误不是异常。
+		if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 			a.mu.Lock()
 			a.running = false
 			a.mu.Unlock()
@@ -318,7 +320,13 @@ func (a *App) Shutdown() error {
 	a.srv.Close() // 先断 SSE，避免 Shutdown 等待长连接
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := httpSrv.Shutdown(ctx); err != nil {
+	err := httpSrv.Shutdown(ctx)
+	// ServeTLS 可能还没把 ln 注册进 http.Server（Start 后立即 Shutdown 的竞态），
+	// 那时 Shutdown 一个监听都关不到，端口会一直被占着；这里显式再关一次。
+	if ln != nil {
+		_ = ln.Close()
+	}
+	if err != nil {
 		return fmt.Errorf("关闭服务超时: %w", err)
 	}
 	return nil
