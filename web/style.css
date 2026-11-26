@@ -2252,6 +2252,10 @@ body.admin-open #btn-account {
 .connect-side .hint {
   margin: 0;
 }
+/* 对话框里的同一套布局：没有标题时不需要上边距 */
+.connect-panel .connect-body {
+  margin-top: 0;
+}
 @media (max-width: 560px) {
   .connect-body {
     flex-direction: column;

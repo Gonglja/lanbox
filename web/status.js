@@ -2,6 +2,7 @@
 import { api } from './api.js';
 import { fmtBytes } from './render.js';
 import { fillURLOptions, renderQR } from './connect.js';
+import { openPanel } from './ui.js';
 
 const $ = (id) => document.getElementById(id);
 const REFRESH_MS = 5000;
@@ -167,6 +168,60 @@ async function refreshConnect() {
   } catch {
     // 连接信息拿不到时静默隐藏，不影响其它状态卡片
     card.hidden = true;
+  }
+}
+
+// openConnectPanel 打开「手机扫码连接」对话框（侧栏入口，不必先进状态页）。
+// 数据与状态页那张卡片同源：GET /api/connect → 地址下拉 + 二维码 SVG。
+export async function openConnectPanel() {
+  const wrap = document.createElement('div');
+  wrap.className = 'connect-panel';
+
+  const qrBox = document.createElement('div');
+  qrBox.className = 'connect-qr';
+
+  const select = document.createElement('select');
+  select.setAttribute('aria-label', '连接地址');
+
+  const field = document.createElement('label');
+  field.className = 'field';
+  const fieldLabel = document.createElement('span');
+  fieldLabel.className = 'field-label';
+  fieldLabel.textContent = '连接地址';
+  field.append(fieldLabel, select);
+
+  const hint = document.createElement('p');
+  hint.className = 'hint';
+  hint.textContent = '手机相机扫码即可打开；自签证书首次还需要在手机上选择「继续访问」。';
+
+  const side = document.createElement('div');
+  side.className = 'connect-side';
+  side.append(field, hint);
+
+  const body = document.createElement('div');
+  body.className = 'connect-body';
+  body.append(qrBox, side);
+  wrap.append(body);
+
+  openPanel({ title: '手机扫码连接', content: wrap });
+
+  select.addEventListener('change', () => renderQR(qrBox, select.value, select.value));
+
+  try {
+    const info = await api.connect();
+    const pick = fillURLOptions(select, (info && info.urls) || [], info && info.preferred);
+    if (!pick) {
+      qrBox.remove();
+      field.hidden = true;
+      hint.textContent = '没有可用的连接地址（检查 listen 配置；只监听 127.0.0.1 时手机连不上）。';
+      return;
+    }
+    renderQR(qrBox, pick, pick);
+  } catch (err) {
+    // 拿不到连接信息时给出可读原因，不要让对话框空白
+    qrBox.remove();
+    field.hidden = true;
+    hint.textContent = (err && err.message) || '连接信息获取失败';
   }
 }
 

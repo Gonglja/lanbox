@@ -4,7 +4,7 @@ import { renderMarkdown } from './markdown.js';
 import { connectEvents } from './sse.js';
 import { initAdmin, closeAdminDrawer } from './admin.js';
 import { initAccountMenu, closeAccountMenu } from './account.js';
-import { closeStatusPage, initStatusPage, openStatusPage } from './status.js';
+import { closeStatusPage, initStatusPage, openConnectPanel, openStatusPage } from './status.js';
 import {
   fillIcons,
   initTheme,
@@ -695,6 +695,12 @@ function bind() {
     closeAdminDrawer();
     closeSidebar();
     setView('status');
+  });
+  // 扫码连接：任何页面都能打（纯 web 客户端没有这个入口，可选绑定）
+  $('btn-connect-qr')?.addEventListener('click', () => {
+    closeAdminDrawer();
+    closeSidebar();
+    openConnectPanel();
   });
 
   let searchTimer = null;

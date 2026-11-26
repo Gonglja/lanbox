@@ -37,7 +37,7 @@ function paintConnState(user) {
   btn.classList.toggle('is-off', !on);
   if (on) {
     text.textContent = hostOf(origin);
-    btn.title = `${origin} · ${user.username} · 点击查看二维码/切换服务器`;
+    btn.title = `${origin} · ${user.username} · 点击切换服务器/发现局域网`;
   } else {
     text.textContent = '未连接';
     btn.title = '切换服务器';
@@ -142,7 +142,7 @@ function bindClientEvents() {
     setAuthStatus('');
   });
 
-  // 徽标：未连接时把焦点送回地址栏；已连接时打开服务器面板（二维码/发现/断开）
+  // 徽标：未连接时把焦点送回地址栏；已连接时打开服务器面板（发现/断开）
   $('conn-state')?.addEventListener('click', () => {
     if ($('app-view').hidden) {
       $('server-input')?.focus();

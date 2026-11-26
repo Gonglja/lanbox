@@ -8,7 +8,6 @@
 import { api } from '../web/api.js';
 import { apiBase, setToken } from '../web/env.js';
 import { confirmDialog, openPanel } from '../web/ui.js';
-import { fillURLOptions, renderQR } from '../web/connect.js';
 import {
   TOKEN_KEY,
   applyConnection,
@@ -370,7 +369,8 @@ export async function disconnectAndReload() {
   location.reload();
 }
 
-// openServerPanel 显示：当前地址的二维码（给另一台设备扫）、地址列表、发现其他实例、断开。
+// openServerPanel 显示：当前地址、发现其他实例、断开切换。
+// 二维码只在服务端 Web UI 展示（侧栏「扫码连接」/ 状态页），客户端不重复画。
 export async function openServerPanel() {
   const wrap = document.createElement('div');
   wrap.className = 'server-panel';
@@ -379,11 +379,9 @@ export async function openServerPanel() {
   current.className = 'dialog-text';
   current.textContent = `当前：${apiBase()}`;
 
-  const qrBox = document.createElement('div');
-  qrBox.className = 'connect-qr';
-
-  const select = document.createElement('select');
-  select.setAttribute('aria-label', '连接地址');
+  const tip = document.createElement('p');
+  tip.className = 'hint';
+  tip.textContent = '要让另一台设备扫码连接，请打开服务端网页的侧栏「扫码连接」。';
 
   const list = document.createElement('ul');
   list.className = 'server-list';
@@ -400,18 +398,8 @@ export async function openServerPanel() {
   cutBtn.textContent = '断开并切换';
   actions.append(findBtn, cutBtn);
 
-  wrap.append(current, qrBox, select, list, actions);
-  const panel = openPanel({ title: '服务器与扫码连接', content: wrap });
-
-  select.addEventListener('change', () => renderQR(qrBox, select.value, select.value));
-
-  try {
-    const info = await api.connect();
-    const pick = fillURLOptions(select, info.urls || [], info.preferred);
-    renderQR(qrBox, pick, pick);
-  } catch {
-    renderQR(qrBox, apiBase(), apiBase());
-  }
+  wrap.append(current, tip, list, actions);
+  const panel = openPanel({ title: '服务器与局域网', content: wrap });
 
   findBtn.addEventListener('click', async () => {
     findBtn.disabled = true;
