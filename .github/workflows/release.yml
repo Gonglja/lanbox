@@ -139,6 +139,11 @@ jobs:
           SDKMAN="$(command -v sdkmanager || true)"
           if [ -z "$SDKMAN" ]; then SDKMAN="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"; fi
           echo "SDKMAN=$SDKMAN"
+          # 环境概况打成 warning：日志要登录才能看，annotation 是公开的
+          echo "::warning title=sdk::SDKMAN=$SDKMAN"
+          echo "::warning title=sdk::sdk=$(ls "$ANDROID_SDK_ROOT" | paste -sd' ' -)"
+          echo "::warning title=sdk::platforms=$(ls "$ANDROID_SDK_ROOT/platforms" 2>/dev/null | paste -sd' ' -)"
+          echo "::warning title=sdk::ndk=$(ls "$ANDROID_SDK_ROOT/ndk" 2>/dev/null | paste -sd' ' -)"
           yes | "$SDKMAN" --licenses >/dev/null 2>&1 || true
           if ! "$SDKMAN" --install "platforms;android-35" "build-tools;35.0.0" "ndk;${NDK_VERSION}" > /tmp/sdk.log 2>&1; then
             tail -12 /tmp/sdk.log | while IFS= read -r l; do echo "::error title=sdkmanager::$(printf '%s' "$l" | cut -c1-350)"; done
