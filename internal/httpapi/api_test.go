@@ -523,3 +523,124 @@ func TestSSEPushesEvents(t *testing.T) {
 		t.Fatal("3 秒内未收到 SSE 事件")
 	}
 }
+
+type userOut struct {
+	Username string `json:"username"`
+	IsAdmin  bool   `json:"is_admin"`
+}
+
+func TestAdminUserManagement(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+
+	// 非管理员不能访问用户管理
+	if err := e.auth.CreateUser("bob", "bobpassword", false); err != nil {
+		t.Fatal(err)
+	}
+	e.login(t, "bob", "bobpassword")
+	resp, _ := e.do(t, e.newJSONReq(t, http.MethodGet, "/api/users", nil))
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("普通用户访问用户管理应 403，得到 %d", resp.StatusCode)
+	}
+	e.loginAdmin(t)
+
+	// 新增用户
+	resp, body := e.do(t, e.newJSONReq(t, http.MethodPost, "/api/users",
+		map[string]any{"username": "carol", "password": "carolpassword", "is_admin": false}))
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("新增用户应 201，得到 %d %s", resp.StatusCode, body)
+	}
+	// 重名
+	resp, _ = e.do(t, e.newJSONReq(t, http.MethodPost, "/api/users",
+		map[string]any{"username": "carol", "password": "carolpassword"}))
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("重名应 409，得到 %d", resp.StatusCode)
+	}
+	// 弱密码
+	resp, _ = e.do(t, e.newJSONReq(t, http.MethodPost, "/api/users",
+		map[string]any{"username": "dave", "password": "123"}))
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("弱密码应 400，得到 %d", resp.StatusCode)
+	}
+
+	// 列表不含哈希
+	resp, body = e.do(t, e.newJSONReq(t, http.MethodGet, "/api/users", nil))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("列表应 200，得到 %d", resp.StatusCode)
+	}
+	if bytes.Contains(body, []byte("hash")) || bytes.Contains(body, []byte("salt")) {
+		t.Fatalf("用户列表不应泄漏哈希: %s", body)
+	}
+	var users []userOut
+	if err := json.Unmarshal(body, &users); err != nil {
+		t.Fatalf("解析用户列表失败: %v (%s)", err, body)
+	}
+	if len(users) != 3 {
+		t.Fatalf("应有 3 个用户，得到 %d: %s", len(users), body)
+	}
+
+	// 改密
+	resp, _ = e.do(t, e.newJSONReq(t, http.MethodPost, "/api/users/carol/password",
+		map[string]any{"password": "newcarolpassword"}))
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("改密应 204，得到 %d", resp.StatusCode)
+	}
+	if _, ok := e.auth.Verify("carol", "newcarolpassword"); !ok {
+		t.Fatal("新密码未生效")
+	}
+
+	// 不能删自己
+	resp, _ = e.do(t, e.newJSONReq(t, http.MethodDelete, "/api/users/admin", nil))
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("删除自己应 403，得到 %d", resp.StatusCode)
+	}
+	// 删除普通用户
+	resp, _ = e.do(t, e.newJSONReq(t, http.MethodDelete, "/api/users/carol", nil))
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("删除普通用户应 204，得到 %d", resp.StatusCode)
+	}
+	resp, _ = e.do(t, e.newJSONReq(t, http.MethodDelete, "/api/users/carol", nil))
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("重复删除应 404，得到 %d", resp.StatusCode)
+	}
+}
+
+func TestCannotDeleteLastAdmin(t *testing.T) {
+	e := newEnv(t)
+	if err := e.auth.CreateUser("boss2", "boss2password", true); err != nil {
+		t.Fatal(err)
+	}
+	e.login(t, "boss2", "boss2password")
+
+	// boss2 删 admin 允许（还剩 boss2 是管理员）
+	resp, _ := e.do(t, e.newJSONReq(t, http.MethodDelete, "/api/users/admin", nil))
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("删除另一管理员应 204，得到 %d", resp.StatusCode)
+	}
+	// 只剩自己，删自己应报"不能删除自己"
+	resp, body := e.do(t, e.newJSONReq(t, http.MethodDelete, "/api/users/boss2", nil))
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("删除自己应 403，得到 %d %s", resp.StatusCode, body)
+	}
+}
+
+func TestChangeOwnPassword(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+
+	resp, _ := e.do(t, e.newJSONReq(t, http.MethodPost, "/api/password",
+		map[string]string{"old": "wrong", "new": "newpassword"}))
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("旧密码错误应 403，得到 %d", resp.StatusCode)
+	}
+	resp, _ = e.do(t, e.newJSONReq(t, http.MethodPost, "/api/password",
+		map[string]string{"old": e.adminPassword, "new": "newpassword"}))
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("改密应 204，得到 %d", resp.StatusCode)
+	}
+	// 会话已被踢，需重新登录
+	resp, _ = e.do(t, e.newJSONReq(t, http.MethodGet, "/api/me", nil))
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("改密后旧会话应失效，得到 %d", resp.StatusCode)
+	}
+}
