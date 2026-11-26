@@ -2,120 +2,238 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>lanbox</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<script src="/theme-boot.js"></script>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 
-<section id="login-view" class="centered" hidden>
-  <form id="login-form" class="card login">
-    <h1>lanbox</h1>
-    <p class="hint">请先登录</p>
-    <label>用户名
+<!-- ============ 登录 ============ -->
+<section id="login-view" class="auth" hidden>
+  <form id="login-form" class="auth-card">
+    <div class="brand brand-lg">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">lanbox</span>
+    </div>
+    <p class="auth-sub">内网与外网之间的文件、消息交换</p>
+    <label class="field">
+      <span class="field-label">用户名</span>
       <input id="login-username" name="username" autocomplete="username" required autofocus>
     </label>
-    <label>密码
+    <label class="field">
+      <span class="field-label">密码</span>
       <input id="login-password" name="password" type="password" autocomplete="current-password" required>
     </label>
-    <p id="login-error" class="error" hidden></p>
-    <button type="submit" class="primary">登录</button>
+    <p id="login-error" class="field-error" hidden></p>
+    <button type="submit" class="btn btn-primary btn-block">登录</button>
   </form>
 </section>
 
-<section id="app-view" hidden>
-  <header class="topbar">
-    <strong class="brand">lanbox</strong>
-    <span id="who" class="who"></span>
-    <span id="sse-state" class="badge" title="实时连接状态">连接中…</span>
-    <span class="spacer"></span>
-    <button id="btn-admin" hidden>用户管理</button>
-    <button id="btn-logout">登出</button>
-  </header>
+<!-- ============ 主界面 ============ -->
+<div id="app-view" class="app" hidden>
 
-  <div class="wrap">
-    <form id="composer" class="card">
-      <textarea id="composer-text" rows="3" placeholder="请输入文字或文件…（支持拖入文件/文件夹、Ctrl+V 粘贴截图）"></textarea>
-      <ul id="pending-files" class="pending"></ul>
-      <div class="composer-actions">
-        <label class="file-btn">选择文件<input id="composer-files" type="file" multiple hidden></label>
-        <label class="file-btn">选择文件夹<input id="composer-dir" type="file" webkitdirectory directory multiple hidden></label>
-        <span id="limit-hint" class="hint"></span>
-        <span class="spacer"></span>
-        <button type="submit" id="btn-send" class="primary">发送</button>
+  <aside id="sidebar" class="sidebar" aria-label="侧栏">
+    <div class="sidebar-top">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">lanbox</span>
       </div>
-      <div id="progress" class="progress" hidden>
-        <div id="progress-bar"></div>
-        <span id="progress-text"></span>
-      </div>
-    </form>
-
-    <div class="toolbar">
-      <button id="filter-all" class="chip active" type="button">全部</button>
-      <button id="filter-todo" class="chip" type="button">未取走</button>
-      <input id="search" type="search" placeholder="搜索文字或文件名">
+      <button id="btn-sidebar-close" class="btn btn-icon sidebar-close" type="button" aria-label="收起侧栏">
+        <span class="icon" data-icon="close"></span>
+      </button>
     </div>
 
-    <main id="items" class="items"></main>
-    <div class="more"><button id="btn-more" hidden type="button">加载更多</button></div>
-  </div>
-</section>
+    <nav class="nav" aria-label="视图">
+      <button id="filter-all" class="nav-row is-active" type="button">
+        <span class="icon" data-icon="timeline"></span>
+        <span class="nav-label">全部</span>
+        <span id="count-all" class="nav-count"></span>
+      </button>
+      <button id="filter-todo" class="nav-row" type="button">
+        <span class="icon" data-icon="circle-dashed"></span>
+        <span class="nav-label">未取走</span>
+        <span id="count-todo" class="nav-count"></span>
+      </button>
+    </nav>
 
-<aside id="admin-drawer" class="drawer" hidden>
+    <div class="sidebar-section">
+      <span class="section-label">搜索</span>
+      <div class="search">
+        <span class="icon" data-icon="search"></span>
+        <input id="search" type="search" placeholder="搜索文字或文件名" aria-label="搜索内容">
+      </div>
+    </div>
+
+    <div class="sidebar-fill"></div>
+
+    <div class="sidebar-section">
+      <span class="section-label">外观</span>
+      <div id="theme-picker" class="segmented" role="radiogroup" aria-label="外观主题">
+        <button type="button" role="radio" data-theme-value="system" aria-checked="false">
+          <span class="icon" data-icon="auto"></span><span class="seg-text">跟随系统</span>
+        </button>
+        <button type="button" role="radio" data-theme-value="light" aria-checked="false">
+          <span class="icon" data-icon="sun"></span><span class="seg-text">亮色</span>
+        </button>
+        <button type="button" role="radio" data-theme-value="dark" aria-checked="false">
+          <span class="icon" data-icon="moon"></span><span class="seg-text">暗色</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="sidebar-account">
+      <span id="me-avatar" class="avatar" aria-hidden="true"></span>
+      <span class="account-main">
+        <span id="me-name" class="account-name"></span>
+        <span id="me-role" class="account-role"></span>
+      </span>
+      <button id="btn-admin" class="btn btn-sm" type="button" hidden>
+        <span class="icon" data-icon="settings"></span>管理
+      </button>
+      <button id="btn-logout" class="btn btn-icon" type="button" aria-label="登出" title="登出">
+        <span class="icon" data-icon="logout"></span>
+      </button>
+    </div>
+  </aside>
+
+  <div id="sidebar-scrim" class="scrim" hidden></div>
+
+  <main class="main">
+    <header class="main-head">
+      <button id="btn-sidebar-open" class="btn btn-icon only-mobile" type="button" aria-label="打开侧栏">
+        <span class="icon" data-icon="menu"></span>
+      </button>
+      <h1 id="view-title" class="view-title">时间线</h1>
+      <span class="spacer"></span>
+      <span id="sse-state" class="pill sse" title="实时连接状态" aria-live="polite">
+        <span class="dot"></span><span class="sse-text">连接中…</span>
+      </span>
+    </header>
+
+    <div class="main-body">
+      <div class="column">
+
+        <form id="composer" class="composer" autocomplete="off">
+          <textarea id="composer-text" class="composer-input" rows="2"
+            placeholder="有什么想分享的…（支持拖入文件/文件夹、Ctrl+V 粘贴截图）"></textarea>
+          <ul id="pending-files" class="chips"></ul>
+          <div class="composer-bar">
+            <button id="btn-pick-files" class="btn btn-icon" type="button" title="选择文件" aria-label="选择文件">
+              <span class="icon" data-icon="paperclip"></span>
+            </button>
+            <button id="btn-pick-dir" class="btn btn-icon" type="button" title="选择文件夹" aria-label="选择文件夹">
+              <span class="icon" data-icon="folder"></span>
+            </button>
+            <input id="composer-files" type="file" multiple hidden>
+            <input id="composer-dir" type="file" webkitdirectory directory multiple hidden>
+            <span id="limit-hint" class="hint"></span>
+            <span class="spacer"></span>
+            <button type="submit" id="btn-send" class="btn btn-primary">发送</button>
+          </div>
+          <div id="progress" class="progress" hidden>
+            <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
+            <span id="progress-text" class="progress-text"></span>
+          </div>
+        </form>
+
+        <div id="empty" class="empty" hidden>
+          <span id="empty-icon" class="icon icon-lg" data-icon="sparkles"></span>
+          <p id="empty-title" class="empty-title">这里还没有内容</p>
+          <p id="empty-text" class="empty-text">在上方写点什么，或拖入文件发送给另一端。</p>
+        </div>
+
+        <main id="items" class="memos"></main>
+        <div class="more"><button id="btn-more" class="btn" type="button" hidden>加载更多</button></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- ============ 管理抽屉 ============ -->
+<aside id="admin-drawer" class="drawer" role="dialog" aria-modal="true" aria-labelledby="admin-title" hidden>
   <div class="drawer-head">
-    <strong>管理</strong>
+    <h2 id="admin-title" class="drawer-title">管理</h2>
     <span class="spacer"></span>
-    <button id="btn-close-admin" type="button">关闭</button>
+    <button id="btn-close-admin" class="btn btn-icon" type="button" aria-label="关闭管理面板">
+      <span class="icon" data-icon="close"></span>
+    </button>
   </div>
-  <div class="tabs">
-    <button id="tab-users" class="chip active" type="button">用户</button>
-    <button id="tab-settings" class="chip" type="button">设置</button>
-  </div>
-  <section id="pane-users">
-    <form id="user-form" class="card">
-      <label>用户名<input id="user-name" autocomplete="off" required></label>
-      <label>密码<input id="user-pass" type="password" autocomplete="new-password" minlength="8" required></label>
-      <label class="inline"><input id="user-admin" type="checkbox"> 管理员</label>
-      <button type="submit" class="primary">新增用户</button>
-      <p id="admin-error" class="error" hidden></p>
-    </form>
-    <ul id="user-list" class="users"></ul>
-  </section>
-  <section id="pane-settings" hidden>
-    <div id="settings-groups"></div>
-    <p id="settings-error" class="error" hidden></p>
-    <p id="settings-hint" class="hint"></p>
-    <div class="settings-actions">
-      <button id="btn-save-settings" class="primary" type="button">保存</button>
-      <button id="btn-restart" type="button" hidden>立即重启</button>
-    </div>
-  </section>
-</aside>
 
+  <div class="segmented segmented-block" role="tablist" aria-label="管理分区">
+    <button id="tab-users" class="is-active" type="button" role="tab" aria-selected="true" aria-controls="pane-users">用户</button>
+    <button id="tab-settings" type="button" role="tab" aria-selected="false" aria-controls="pane-settings">设置</button>
+  </div>
+
+  <div class="drawer-body">
+    <section id="pane-users" role="tabpanel" aria-labelledby="tab-users" class="pane">
+      <p class="pane-hint">所有账号的权限对等；管理员额外拥有本面板。</p>
+      <ul id="user-list" class="users"></ul>
+
+      <details id="user-create" class="disclosure">
+        <summary><span class="icon" data-icon="plus"></span>新增用户</summary>
+        <form id="user-form" class="form">
+          <label class="field">
+            <span class="field-label">用户名</span>
+            <input id="user-name" autocomplete="off" required>
+          </label>
+          <label class="field">
+            <span class="field-label">密码</span>
+            <input id="user-pass" type="password" autocomplete="new-password" minlength="8" required>
+            <span class="field-hint">至少 8 位</span>
+          </label>
+          <label class="check">
+            <input id="user-admin" type="checkbox">
+            <span>设为管理员</span>
+          </label>
+          <p id="admin-error" class="field-error" hidden></p>
+          <button type="submit" class="btn btn-primary btn-block">创建账号</button>
+        </form>
+      </details>
+    </section>
+
+    <section id="pane-settings" role="tabpanel" aria-labelledby="tab-settings" class="pane" hidden>
+      <div id="settings-groups" class="settings-groups"></div>
+      <p id="settings-error" class="field-error" hidden></p>
+      <p id="settings-hint" class="hint hint-block"></p>
+      <div class="drawer-actions">
+        <button id="btn-save-settings" class="btn btn-primary" type="button">保存设置</button>
+        <button id="btn-restart" class="btn btn-danger" type="button" hidden>立即重启</button>
+      </div>
+    </section>
+  </div>
+</aside>
+<div id="drawer-scrim" class="scrim" hidden></div>
+
+<!-- ============ 重启遮罩 ============ -->
 <div id="restart-mask" class="mask" hidden>
-  <div class="card mask-card">
-    <strong>服务重启中…</strong>
-    <p class="hint">约 1–3 秒不可用，所有人需重新登录。若刚改了监听地址，请在新地址访问。</p>
-    <p id="restart-error" class="error" hidden></p>
+  <div class="dialog" role="alertdialog" aria-labelledby="restart-title">
+    <h2 id="restart-title" class="dialog-title">服务重启中…</h2>
+    <p class="dialog-text">约 1–3 秒不可用，所有人需重新登录。若刚改了监听地址，请在新地址访问。</p>
+    <p id="restart-error" class="field-error" hidden></p>
   </div>
 </div>
 
-<template id="tpl-item">
-  <article class="card item">
-    <div class="meta">
-      <span class="item-user"></span>
-      <span class="dot">·</span>
-      <span class="item-ip"></span>
-      <span class="dot">·</span>
-      <time class="item-time"></time>
+<!-- ============ 提示与对话框 ============ -->
+<div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+<div id="modal-root" class="modal-root" hidden></div>
+
+<template id="tpl-memo">
+  <article class="memo">
+    <div class="memo-head">
+      <span class="avatar memo-avatar" aria-hidden="true"></span>
+      <span class="memo-author"></span>
+      <span class="memo-ip" hidden></span>
       <span class="spacer"></span>
-      <span class="item-taken-tag" hidden>已取走</span>
+      <span class="pill pill-ok memo-taken" hidden>已取走</span>
+      <time class="memo-time"></time>
     </div>
-    <p class="item-text"></p>
+    <p class="memo-text"></p>
     <ul class="files"></ul>
-    <div class="item-actions">
-      <button class="act-taken" type="button"></button>
-      <button class="act-delete danger" type="button">删除</button>
+    <div class="memo-foot">
+      <button class="btn btn-sm act-taken" type="button"></button>
+      <button class="btn btn-sm btn-danger act-delete" type="button">删除</button>
     </div>
   </article>
 </template>

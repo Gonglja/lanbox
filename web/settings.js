@@ -1,4 +1,5 @@
 import { api } from './api.js';
+import { confirmDialog, toast } from './ui.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -6,16 +7,16 @@ const GROUPS = [
   {
     title: '上传与存储',
     fields: [
-      { key: 'max_file_size_mb', label: '单文件上限 (MB)', min: 1, step: 1 },
-      { key: 'max_item_size_mb', label: '单条总大小上限 (MB)', min: 1, step: 1 },
-      { key: 'min_free_disk_mb', label: '保留空闲空间 (MB)', min: 0, step: 1 },
+      { key: 'max_file_size_mb', label: '单文件上限', unit: 'MB', min: 1, step: 1 },
+      { key: 'max_item_size_mb', label: '单条总大小上限', unit: 'MB', min: 1, step: 1 },
+      { key: 'min_free_disk_mb', label: '保留空闲空间', unit: 'MB', min: 0, step: 1 },
       { key: 'max_files_per_item', label: '单条附件数上限', min: 1, step: 1 },
-      { key: 'max_text_bytes', label: '文字上限 (字节)', min: 1, step: 1 },
+      { key: 'max_text_bytes', label: '文字上限', unit: '字节', min: 1, step: 1 },
     ],
   },
   {
     title: '会话',
-    fields: [{ key: 'session_ttl_hours', label: '会话有效期 (小时)', min: 1, step: 1 }],
+    fields: [{ key: 'session_ttl_hours', label: '会话有效期', unit: '小时', min: 1, step: 1 }],
   },
   {
     title: '网络与证书',
@@ -37,6 +38,7 @@ const GROUPS = [
 ];
 
 const originText = { default: '默认', file: '配置文件', env: '环境变量', web: '网页设置' };
+
 let current = null;
 
 function getValue(obj, path) {
@@ -58,7 +60,26 @@ function rowFor(field) {
   row.className = 'settings-row';
 
   const label = document.createElement('label');
-  label.textContent = field.label;
+  label.className = 'settings-label';
+  const text = document.createElement('span');
+  text.textContent = field.label + (field.unit ? `（${field.unit}）` : '');
+  label.append(text);
+
+  const origin = current.origins[field.key] || 'default';
+  const badge = document.createElement('span');
+  badge.className = 'pill' + (origin === 'web' ? ' pill-warn' : '');
+  badge.textContent = originText[origin] || origin;
+  badge.title = '该值的来源';
+  label.append(badge);
+  if ((current.restart_fields || []).includes(field.key)) {
+    const rb = document.createElement('span');
+    rb.className = 'pill pill-warn';
+    rb.textContent = '需重启';
+    label.append(rb);
+  }
+
+  const wrap = document.createElement('span');
+  wrap.className = 'settings-input';
 
   let input;
   if (field.type === 'bool') {
@@ -72,37 +93,34 @@ function rowFor(field) {
     if (field.step !== undefined) input.step = String(field.step);
     input.value = getValue(current.values, field.key) ?? '';
   }
+  input.id = 'cfg-' + field.key.replace(/\./g, '-');
   input.dataset.key = field.key;
   input.dataset.kind = field.type === 'bool' ? 'bool' : field.type === 'text' ? 'text' : 'number';
+  label.htmlFor = input.id;
 
-  const origin = current.origins[field.key] || 'default';
   if (origin === 'web' && field.type !== 'bool') {
     const baseValue = getValue(current.baseline, field.key);
     if (baseValue !== undefined && baseValue !== '') input.placeholder = `恢复默认：${baseValue}`;
   }
 
-  const badges = document.createElement('span');
-  badges.className = 'badges';
-  const originBadge = document.createElement('span');
-  originBadge.className = 'badge origin';
-  originBadge.textContent = originText[origin] || origin;
-  badges.append(originBadge);
-  if ((current.restart_fields || []).includes(field.key)) {
-    const rb = document.createElement('span');
-    rb.className = 'badge warn';
-    rb.textContent = '需重启';
-    badges.append(rb);
+  if (field.type === 'bool') {
+    const toggle = document.createElement('label');
+    toggle.className = 'check';
+    const cap = document.createElement('span');
+    cap.textContent = '启用';
+    toggle.append(input, cap);
+    wrap.append(toggle);
+  } else {
+    wrap.append(input);
   }
 
-  const wrap = document.createElement('span');
-  wrap.className = 'settings-input';
-  wrap.append(input, badges);
   if (field.hint) {
     const hint = document.createElement('small');
     hint.className = 'hint';
     hint.textContent = field.hint;
     wrap.append(hint);
   }
+
   row.append(label, wrap);
   return row;
 }
@@ -112,15 +130,16 @@ function render() {
   root.replaceChildren();
   for (const group of GROUPS) {
     const box = document.createElement('div');
-    box.className = 'card settings-group';
+    box.className = 'settings-group';
     const h = document.createElement('strong');
+    h.className = 'group-title';
     h.textContent = group.title;
     box.append(h);
     for (const field of group.fields) box.append(rowFor(field));
     if (group.title === '局域网发现') {
       const st = current.mdns || {};
-      const info = document.createElement('p');
-      info.className = 'hint';
+      const info = document.createElement('div');
+      info.className = 'settings-foot';
       info.textContent = st.running
         ? `已通告：https://${st.host}.local:${st.port}（实例 ${st.instance}${
             st.addrs && st.addrs.length ? '，' + st.addrs.join(', ') : ''
@@ -160,6 +179,8 @@ function collect() {
 async function save() {
   const err = $('settings-error');
   err.hidden = true;
+  const btn = $('btn-save-settings');
+  btn.disabled = true;
   try {
     const res = await api.saveConfig(collect(), false);
     await showSettings();
@@ -170,14 +191,24 @@ async function save() {
     if (restartRequired.length) parts.push(`需重启生效：${restartRequired.join('、')}`);
     $('settings-hint').textContent = parts.join('；') || '没有变化';
     $('btn-restart').hidden = restartRequired.length === 0;
+    toast(applied.length || restartRequired.length ? '设置已保存' : '没有变化', 'ok');
   } catch (e) {
     err.textContent = e.message;
     err.hidden = false;
+  } finally {
+    btn.disabled = false;
   }
 }
 
 async function doRestart() {
-  if (!confirm('确定重启服务？约 1–3 秒不可用，所有人需重新登录。若刚改了监听地址，请在新地址访问。')) return;
+  const ok = await confirmDialog({
+    title: '重启服务？',
+    message: '约 1–3 秒不可用，所有人需重新登录。若刚改了监听地址，请在新地址访问。',
+    confirmText: '立即重启',
+    danger: true,
+  });
+  if (!ok) return;
+
   const mask = $('restart-mask');
   const err = $('restart-error');
   err.hidden = true;

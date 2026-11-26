@@ -1,7 +1,15 @@
 import { api, ApiError, uploadItem } from './api.js';
 import { renderItem, fmtBytes } from './render.js';
 import { connectEvents } from './sse.js';
-import { initAdmin } from './admin.js';
+import { initAdmin, closeAdminDrawer } from './admin.js';
+import {
+  fillIcons,
+  initTheme,
+  paintAvatar,
+  setIcon,
+  toast,
+  confirmDialog,
+} from './ui.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -18,16 +26,11 @@ const state = {
 
 // ---------- 视图切换 ----------
 
-function showError(el, err) {
-  if (!el) return;
-  el.textContent = err && err.message ? err.message : String(err);
-  el.hidden = false;
-}
-
 function showLogin() {
   $('login-view').hidden = false;
   $('app-view').hidden = true;
-  $('admin-drawer').hidden = true;
+  closeAdminDrawer();
+  closeSidebar();
   if (state.events) {
     state.events.close();
     state.events = null;
@@ -38,12 +41,47 @@ function showLogin() {
 function showApp() {
   $('login-view').hidden = true;
   $('app-view').hidden = false;
-  $('who').textContent = `${state.user.username} · ${state.user.is_admin ? '管理员' : '成员'}`;
+  const role = state.user.is_admin ? '管理员' : '成员';
+  $('me-name').textContent = state.user.username;
+  $('me-role').textContent = role;
+  paintAvatar($('me-avatar'), state.user.username);
   $('btn-admin').hidden = !state.user.is_admin;
   startEvents();
+  syncSidebarForViewport();
+}
+
+// ---------- 移动端侧栏 ----------
+
+function openSidebar() {
+  $('app-view').classList.add('sidebar-open');
+  $('sidebar-scrim').hidden = false;
+}
+
+function closeSidebar() {
+  $('app-view').classList.remove('sidebar-open');
+  $('sidebar-scrim').hidden = true;
+}
+
+function syncSidebarForViewport() {
+  // 宽屏时侧栏常驻，遮罩与开合状态都清掉，避免残留
+  if (window.innerWidth > 720) closeSidebar();
 }
 
 // ---------- 列表 ----------
+
+function updateCounts() {
+  // 列表是按当前筛选从服务端拉回来的，别的视图的数量无从得知；
+  // 给非当前行标数字会误导（「全部 3」而实际有 5 条），所以只标当前行。
+  const all = $('count-all');
+  const todo = $('count-todo');
+  all.textContent = '';
+  todo.textContent = '';
+  if (state.filter === 'all') {
+    all.textContent = state.items.size ? String(state.items.size) : '';
+  } else {
+    todo.textContent = state.items.size ? String(state.items.size) : '';
+  }
+}
 
 function renderList() {
   const box = $('items');
@@ -53,6 +91,33 @@ function renderList() {
   }
   box.replaceChildren(...nodes);
   $('btn-more').hidden = !state.cursor;
+  updateCounts();
+  updateEmptyState();
+}
+
+function updateEmptyState() {
+  // 标题只跟筛选/搜索走，和是否有内容无关
+  const searching = Boolean(state.q) || state.filter === 'todo';
+  $('view-title').textContent = searching ? (state.q ? '搜索结果' : '未取走') : '时间线';
+
+  const hasAny = state.items.size > 0;
+  $('empty').hidden = hasAny;
+  if (hasAny) return;
+
+  // 三种空状态：搜索无结果、未取走筛选为空、真的没有内容
+  if (state.q) {
+    setIcon($('empty-icon'), 'search');
+    $('empty-title').textContent = '没有匹配的内容';
+    $('empty-text').textContent = '换个关键词，或清空搜索再试。';
+  } else if (state.filter === 'todo') {
+    setIcon($('empty-icon'), 'check');
+    $('empty-title').textContent = '没有未取走的内容';
+    $('empty-text').textContent = '新内容发布后会出现在这里。';
+  } else {
+    setIcon($('empty-icon'), 'sparkles');
+    $('empty-title').textContent = '这里还没有内容';
+    $('empty-text').textContent = '在上方写点什么，或拖入文件发送给另一端。';
+  }
 }
 
 function upsert(item) {
@@ -69,19 +134,27 @@ function removeItem(id) {
 }
 
 async function loadFirstPage() {
-  const res = await api.list({ filter: state.filter, q: state.q });
-  state.items = new Map(res.items.map((it) => [it.id, it]));
-  state.cursor = res.next_cursor || '';
-  state.loaded = true;
-  renderList();
+  try {
+    const res = await api.list({ filter: state.filter, q: state.q });
+    state.items = new Map(res.items.map((it) => [it.id, it]));
+    state.cursor = res.next_cursor || '';
+    state.loaded = true;
+    renderList();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
 }
 
 async function loadMore() {
   if (!state.cursor) return;
-  const res = await api.list({ filter: state.filter, q: state.q, before: state.cursor });
-  for (const it of res.items) state.items.set(it.id, it);
-  state.cursor = res.next_cursor || '';
-  renderList();
+  try {
+    const res = await api.list({ filter: state.filter, q: state.q, before: state.cursor });
+    for (const it of res.items) state.items.set(it.id, it);
+    state.cursor = res.next_cursor || '';
+    renderList();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
 }
 
 // ---------- 实时 ----------
@@ -91,15 +164,15 @@ function startEvents() {
   const badge = $('sse-state');
   state.events = connectEvents({
     onState(s) {
-      badge.classList.remove('on', 'off');
+      badge.classList.remove('is-on', 'is-off');
       if (s === 'open') {
-        badge.classList.add('on');
-        badge.textContent = '实时已连接';
+        badge.classList.add('is-on');
+        badge.querySelector('.sse-text').textContent = '实时已连接';
       } else if (s === 'connecting') {
-        badge.textContent = '连接中…';
+        badge.querySelector('.sse-text').textContent = '连接中…';
       } else {
-        badge.classList.add('off');
-        badge.textContent = '连接断开，重试中';
+        badge.classList.add('is-off');
+        badge.querySelector('.sse-text').textContent = '连接断开，重试中';
       }
     },
     onEvent(type, data) {
@@ -120,7 +193,7 @@ function startEvents() {
         }
         if (state.q) {
           // 有搜索条件时以服务端命中为准，重新拉一次列表
-          loadFirstPage().catch(() => {});
+          loadFirstPage();
           return;
         }
         upsert(payload.item);
@@ -136,23 +209,27 @@ function refreshPending() {
   const nodes = state.pending.map((f, idx) => {
     const li = document.createElement('li');
     const name = document.createElement('span');
+    name.className = 'chip-name';
     name.textContent = f.relPath || f.name;
+    name.title = f.relPath || f.name;
     const size = document.createElement('span');
-    size.className = 'fmeta';
+    size.className = 'chip-size';
     size.textContent = fmtBytes(f.size);
-    const sp = document.createElement('span');
-    sp.className = 'spacer';
     const rm = document.createElement('button');
     rm.type = 'button';
-    rm.textContent = '移除';
+    rm.className = 'chip-x';
+    rm.title = '移除';
+    rm.setAttribute('aria-label', `移除 ${f.relPath || f.name}`);
+    rm.textContent = '×';
     rm.addEventListener('click', () => {
       state.pending.splice(idx, 1);
       refreshPending();
     });
-    li.append(name, size, sp, rm);
+    li.append(name, size, rm);
     return li;
   });
   list.replaceChildren(...nodes);
+
   const total = state.pending.reduce((n, f) => n + f.size, 0);
   let hint = state.pending.length
     ? `待上传 ${state.pending.length} 个文件，共 ${fmtBytes(total)}`
@@ -161,11 +238,23 @@ function refreshPending() {
   // 放这里而不是 addFiles 之前，否则会在刷新列表时被覆盖掉。
   if (state.pending.length > 500) hint += '，超过单条默认上限 500 个，可能被服务端拒绝';
   $('limit-hint').textContent = hint;
+  autoGrow();
 }
 
 function addFiles(files) {
-  for (const f of files) state.pending.push(f);
+  let added = 0;
+  for (const f of files) {
+    state.pending.push(f);
+    added++;
+  }
+  if (!added) return;
   refreshPending();
+}
+
+function autoGrow() {
+  const el = $('composer-text');
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 240) + 'px';
 }
 
 async function submitComposer(ev) {
@@ -175,10 +264,12 @@ async function submitComposer(ev) {
 
   const btn = $('btn-send');
   btn.disabled = true;
+  const composer = $('composer');
   const box = $('progress');
   const bar = $('progress-bar');
   const label = $('progress-text');
   box.hidden = false;
+  composer.classList.add('has-progress');
   bar.style.width = '0%';
   label.textContent = '准备上传…';
 
@@ -195,6 +286,7 @@ async function submitComposer(ev) {
     $('composer-text').value = '';
     state.pending = [];
     refreshPending();
+    autoGrow();
     label.textContent = '上传完成';
     await loadFirstPage();
   } catch (err) {
@@ -204,6 +296,7 @@ async function submitComposer(ev) {
     btn.disabled = false;
     setTimeout(() => {
       box.hidden = true;
+      composer.classList.remove('has-progress');
     }, 1500);
   }
 }
@@ -213,34 +306,50 @@ async function submitComposer(ev) {
 const handlers = {
   async onToggleTaken(item) {
     try {
-      const updated = await api.setTaken(item.id, !item.taken);
+      const updated = (await api.setTaken(item.id, !item.taken)) || (await api.getItem(item.id));
+      if (!updated || !updated.id) return;
       if (state.filter === 'todo' && updated.taken) {
         removeItem(updated.id);
+        toast('已标记取走');
       } else {
         upsert(updated);
       }
     } catch (err) {
-      alert(err.message);
+      toast(err.message, 'error');
     }
   },
   async onDelete(item) {
     const extra = item.files && item.files.length ? `（含 ${item.files.length} 个附件）` : '';
-    if (!confirm(`确定删除这条内容？${extra}\n删除后无法恢复。`)) return;
+    const ok = await confirmDialog({
+      title: '删除这条内容？',
+      message: `删除后无法恢复。${extra}`,
+      confirmText: '删除',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await api.remove(item.id);
       removeItem(item.id);
+      toast('已删除');
     } catch (err) {
-      alert(err.message);
+      toast(err.message, 'error');
     }
   },
   async onDeleteFile(item, file) {
-    if (!confirm(`确定删除附件「${file.name}」？删除后无法恢复。`)) return;
+    const ok = await confirmDialog({
+      title: '删除附件？',
+      message: `「${file.name}」删除后无法恢复。`,
+      confirmText: '删除',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await api.removeFile(item.id, file.id);
       const fresh = await api.getItem(item.id);
       upsert(fresh);
+      toast('附件已删除');
     } catch (err) {
-      alert(err.message);
+      toast(err.message, 'error');
     }
   },
 };
@@ -257,7 +366,8 @@ function bind() {
       showApp();
       await loadFirstPage();
     } catch (err) {
-      showError($('login-error'), err);
+      $('login-error').textContent = err.message;
+      $('login-error').hidden = false;
     }
   });
 
@@ -274,6 +384,9 @@ function bind() {
   });
 
   $('composer').addEventListener('submit', submitComposer);
+  $('btn-pick-files').addEventListener('click', () => $('composer-files').click());
+  $('btn-pick-dir').addEventListener('click', () => $('composer-dir').click());
+
   $('composer-files').addEventListener('change', (ev) => {
     addFiles(ev.target.files);
     ev.target.value = '';
@@ -288,20 +401,40 @@ function bind() {
     ev.target.value = '';
   });
 
+  const text = $('composer-text');
+  text.addEventListener('input', autoGrow);
+  text.addEventListener('keydown', (ev) => {
+    if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') {
+      ev.preventDefault();
+      $('composer').requestSubmit();
+    }
+  });
+
   const composer = $('composer');
+  let dragDepth = 0;
+  composer.addEventListener('dragenter', (ev) => {
+    ev.preventDefault();
+    dragDepth++;
+    composer.classList.add('is-drag');
+  });
   composer.addEventListener('dragover', (ev) => {
     ev.preventDefault();
-    composer.classList.add('drag');
+    if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'copy';
   });
-  composer.addEventListener('dragleave', () => composer.classList.remove('drag'));
+  composer.addEventListener('dragleave', () => {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (!dragDepth) composer.classList.remove('is-drag');
+  });
   composer.addEventListener('drop', async (ev) => {
     ev.preventDefault();
-    composer.classList.remove('drag');
+    dragDepth = 0;
+    composer.classList.remove('is-drag');
     try {
       const files = await collectDroppedFiles(ev.dataTransfer);
       if (files.length) addFiles(files);
+      else toast('没有可上传的文件', 'error');
     } catch (err) {
-      $('limit-hint').textContent = '读取拖入的文件失败：' + (err.message || err);
+      toast('读取拖入的文件失败：' + (err.message || err), 'error');
     }
   });
 
@@ -322,17 +455,23 @@ function bind() {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
       state.q = ev.target.value.trim();
-      loadFirstPage().catch((err) => alert(err.message));
+      loadFirstPage();
     }, 300);
   });
 
-  $('btn-more').addEventListener('click', () => loadMore().catch((err) => alert(err.message)));
+  $('btn-more').addEventListener('click', loadMore);
+
+  $('btn-sidebar-open').addEventListener('click', openSidebar);
+  $('btn-sidebar-close').addEventListener('click', closeSidebar);
+  $('sidebar-scrim').addEventListener('click', closeSidebar);
+  window.addEventListener('resize', syncSidebarForViewport);
 }
 
 async function setFilter(f) {
   state.filter = f;
-  $('filter-all').classList.toggle('active', f === 'all');
-  $('filter-todo').classList.toggle('active', f === 'todo');
+  $('filter-all').classList.toggle('is-active', f === 'all');
+  $('filter-todo').classList.toggle('is-active', f === 'todo');
+  closeSidebar();
   await loadFirstPage();
 }
 
@@ -380,15 +519,18 @@ async function collectDroppedFiles(dataTransfer) {
 // ---------- 启动 ----------
 
 async function main() {
+  fillIcons();
+  initTheme();
   bind();
-  initAdmin();
+  initAdmin(() => state.user);
   try {
     state.user = await api.me();
     showApp();
     await loadFirstPage();
   } catch (err) {
     if (!(err instanceof ApiError) || err.status !== 401) {
-      showError($('login-error'), err);
+      $('login-error').textContent = err.message;
+      $('login-error').hidden = false;
     }
     showLogin();
   }
