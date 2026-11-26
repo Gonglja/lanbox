@@ -13,8 +13,8 @@ android {
         applicationId = "top.glj0.lanbox"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = System.getenv("LANBOX_VERSION_CODE")?.toIntOrNull() ?: 1
+        versionName = System.getenv("LANBOX_VERSION_NAME")?.takeIf { it.isNotBlank() } ?: "0.1.0"
         ndk { abiFilters += "arm64-v8a" }
     }
 

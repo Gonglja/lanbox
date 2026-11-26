@@ -1,0 +1,179 @@
+name: release
+
+# 打 tag 即发布：
+#   git tag v1.2.3 && git push github v1.2.3
+#
+# 产出（全部挂到该 Release 下）：
+#   lanbox-linux-{amd64,arm64,armv7,386}         服务端
+#   lanbox-cli-linux-*                           命令行客户端
+#   lanbox-windows-{amd64,arm64}.exe             Windows 服务端
+#   lanbox-cli-windows-{amd64,arm64}.exe         Windows 命令行客户端
+#   lanbox-agent-windows-{amd64,arm64}.exe       Windows 托盘客户端
+#   lanbox-client.html                           纯 web 客户端（单文件）
+#   lanbox-android.apk                           Android（arm64-v8a）
+#   LICENSE / SHA256SUMS
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {} # 手动跑：Run workflow 里必须选 Tags -> vX.Y.Z
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NDK_VERSION: 27.0.12077973
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # git describe 需要 tag 历史
+
+      - name: 解析版本
+        id: ver
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            echo "::error::请先 push tag（git tag v1.2.3 && git push github v1.2.3）；手动触发时要在 Run workflow 里选择 Tags 下的 tag"
+            exit 1
+          fi
+          TAG="${GITHUB_REF_NAME}"
+          VER="${TAG#v}"
+          BASE="${VER%%-*}"
+          MA=0; MI=0; PA=0
+          IFS=. read -r MA MI PA <<< "$BASE" || true
+          MA="${MA:-0}"; MI="${MI:-0}"; PA="${PA:-0}"
+          case "${MA}${MI}${PA}" in
+            *[!0-9]*) CODE=1 ;; # 不是 semver：versionCode 固定 1
+            *) CODE=$((10#${MA} * 10000 + 10#${MI} * 100 + 10#${PA})) ;;
+          esac
+          {
+            echo "tag=${TAG}"
+            echo "version=${VER}"
+            echo "code=${CODE}"
+          } >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG} version=${VER} versionCode=${CODE}"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: 自检（go vet + go test）
+        # 没直接用 make check：仓库里有几个结构体字段是手对齐的，gofmt 会改；
+        # 所以格式只做提示不阻塞，真正阻塞的是 vet 与 test。
+        run: |
+          go vet ./...
+          go test ./... -count=1
+
+      - name: gofmt 提示（不阻塞）
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then
+            echo "::warning::下面这些文件没按 gofmt 格式化："
+            echo "$out"
+          fi
+
+      - name: 交叉编译（Linux + Windows + CLI + agent + 纯 web 客户端）
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: make dist VERSION="$VERSION"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: 安装 Android SDK 命令行工具
+        uses: android-actions/setup-android@v3
+
+      - name: 安装 platform 35 / build-tools / NDK
+        run: |
+          set -euo pipefail
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "ndk;${NDK_VERSION}"
+          ls "${ANDROID_SDK_ROOT:-$ANDROID_HOME}/ndk"
+
+      - name: 写签名配置（配了 secrets 才用正式签名）
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          STORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_B64:-}" ]; then
+            echo "::warning::未配置 ANDROID_KEYSTORE_B64，APK 会用 debug 签名：能装，但无法覆盖安装正式版"
+            exit 0
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > android/lanbox-release.jks
+          {
+            echo "storeFile=lanbox-release.jks"
+            echo "storePassword=${STORE_PASS}"
+            echo "keyAlias=${KEY_ALIAS:-lanbox}"
+            echo "keyPassword=${KEY_PASS:-${STORE_PASS}}"
+          } > android/keystore.properties
+          echo "已写入 android/lanbox-release.jks + android/keystore.properties"
+
+      - name: 编 Android APK（liblanbox.so + assembleRelease）
+        env:
+          LANBOX_VERSION_NAME: ${{ steps.ver.outputs.version }}
+          LANBOX_VERSION_CODE: ${{ steps.ver.outputs.code }}
+        run: |
+          set -euo pipefail
+          export ANDROID_SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          export ANDROID_NDK="$ANDROID_SDK/ndk/${NDK_VERSION}"
+          chmod +x android/gradlew
+          make android
+          ls -l dist/lanbox-android*.apk
+
+      - name: 重新生成校验和（APK 是 dist 之后才产出的）
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum lanbox-* LICENSE > SHA256SUMS
+          ls -l
+          cat SHA256SUMS
+
+      - name: 上传构建产物（便于排查，Release 之外也留一份）
+        uses: actions/upload-artifact@v4
+        with:
+          name: lanbox-${{ steps.ver.outputs.version }}
+          path: dist/*
+          retention-days: 14
+
+      - name: 发布 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          files: dist/*
+          fail_on_unmatched_files: true
+          prerelease: ${{ contains(steps.ver.outputs.version, '-') }}
+          body: |
+            lanbox ${{ steps.ver.outputs.version }}
+
+            下载对应平台的二进制即可，全部是静态编译、零依赖（附件见 `SHA256SUMS`）：
+
+            | 产物 | 适用 |
+            |---|---|
+            | `lanbox-linux-amd64` | x86_64 小主机 / 虚拟机 |
+            | `lanbox-linux-arm64` | 树莓派 3/4/5、RK3399 等 64 位 ARM |
+            | `lanbox-linux-armv7` | 树莓派 2/3 32 位、老路由器 |
+            | `lanbox-linux-386` | 32 位 x86 |
+            | `lanbox-windows-amd64.exe` | Windows x64 服务端 |
+            | `lanbox-windows-arm64.exe` | Windows on ARM 服务端 |
+            | `lanbox-cli-*` | 命令行客户端（与服务端同平台） |
+            | `lanbox-agent-windows-*.exe` | Windows 托盘客户端（剪贴板上传） |
+            | `lanbox-client.html` | 纯 web 客户端，单文件，浏览器直接打开 |
+            | `lanbox-android.apk` | Android（arm64-v8a，minSdk 26）；未配签名 secrets 时为 `lanbox-android-debug.apk` |
+
+            快速开始：`chmod +x lanbox-linux-amd64 && ./lanbox-linux-amd64`，首次启动会打印 admin 随机密码。

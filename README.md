@@ -218,6 +218,43 @@ Windows 版说明：
 
 浏览器首次访问自签证书会警告，选择"继续访问"；需要长期免警告见下方"信任自签证书"。
 
+## 发版（GitHub Actions）
+
+打 tag 即自动编译并发布，产物挂在 GitHub Release 上（`.github/workflows/release.yml`）：
+
+```bash
+# 建议 tag 用 semver，Android 的 versionName / versionCode 会跟着走
+git tag v1.2.3
+git push github v1.2.3        # 推到 GitHub 才会有 CI；镜像仓库另推 origin
+```
+
+CI 跑 `go vet` + `go test`（gofmt 只打告警不阻塞）→ `make dist`（Linux/Windows/CLI/agent/纯 web 客户端）
+→ `make android`（NDK 编 `liblanbox.so` + Gradle `assembleRelease`），最后把 `dist/*` 全量传到
+该 tag 的 GitHub Release 上。
+
+- 版本号注入：`lanbox -version` 用 tag 名（去掉 `v`），APK 的 `versionName` 同源，
+  `versionCode = major*10000 + minor*100 + patch`（非 semver 的 tag 退化为 1）。
+- tag 里带 `-rc1` / `-beta` 之类后缀会发布成 **prerelease**。
+- 手动重跑：Actions → release → Run workflow，**ref 必须选 Tags 下的 tag**。
+- 构建产物同时作为 workflow artifact 保留 14 天，方便排查失败。
+
+APK 签名：配了下面这组 secrets 就用正式签名（`android/keystore.properties` 由 CI 现场生成，
+仓库里不放密钥）；没配则退化成 debug 签名（能装，但无法覆盖安装正式版，会打 `::warning::`）。
+
+| Secret | 说明 |
+|---|---|
+| `ANDROID_KEYSTORE_B64` | `lanbox-release.jks` 的 base64（`base64 -w0 android/lanbox-release.jks`） |
+| `ANDROID_KEYSTORE_PASSWORD` | storePassword |
+| `ANDROID_KEY_ALIAS` | 可选，默认 `lanbox` |
+| `ANDROID_KEY_PASSWORD` | 可选，默认同 storePassword |
+
+```bash
+# 生成 base64（Linux/macOS；Windows 用 PowerShell）
+base64 -w0 android/lanbox-release.jks > keystore.b64
+# Windows PowerShell
+# [Convert]::ToBase64String([IO.File]::ReadAllBytes("android\lanbox-release.jks")) > keystore.b64
+```
+
 ## 配置
 
 启动时读取 `-config` 指定的文件（默认 `config.json`），**所有字段可省略**：

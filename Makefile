@@ -164,7 +164,7 @@ $(ANDROID_SO): $(ANDROID_SRCS)
 
 ## checksums: 生成并打印 dist/SHA256SUMS
 checksums:
-	@cd $(DIST) && sha256sum $(APP)-* lanbox-client.html LICENSE > SHA256SUMS && cat SHA256SUMS
+	@cd $(DIST) && sha256sum $(APP)-* LICENSE > SHA256SUMS && cat SHA256SUMS
 
 ## test: 跑全部测试
 test:
