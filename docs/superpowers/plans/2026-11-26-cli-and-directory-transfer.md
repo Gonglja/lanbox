@@ -203,9 +203,10 @@ func cleanSegment(seg string) string {
 	return strings.TrimSpace(b.String())
 }
 
-// isWindowsAbs 判断是否是盘符形式的绝对路径（C: / c:/x）。
+// isWindowsAbs 判断是否是盘符形式的绝对路径（C:/x / c:/x）。
+// 盘符后必须紧跟分隔符：否则 "a:b.txt" 这类普通文件名会被误判为绝对路径。
 func isWindowsAbs(p string) bool {
-	if len(p) < 2 || p[1] != ':' {
+	if len(p) < 3 || p[1] != ':' || p[2] != '/' {
 		return false
 	}
 	c := p[0]
