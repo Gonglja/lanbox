@@ -381,5 +381,7 @@ func changedKeys(prev, next Config) []string {
 	add("mdns.enabled", prev.MDNS.Enabled != next.MDNS.Enabled)
 	add("mdns.hostname", prev.MDNS.Hostname != next.MDNS.Hostname)
 	add("mdns.instance", prev.MDNS.Instance != next.MDNS.Instance)
+	add("update.check", prev.Update.Check != next.Update.Check)
+	add("update.url", prev.Update.URL != next.Update.URL)
 	return out
 }

@@ -19,6 +19,15 @@ type TLS struct {
 	KeyFile  string `json:"key_file"`
 }
 
+// Update 是在线更新配置。
+type Update struct {
+	Check string `json:"check"` // off / startup / daily
+	URL   string `json:"url"`   // 空 = GitHub；.json 结尾 = 清单；其它 = 自定义基地址
+
+	// Token 只来自环境变量 LANBOX_UPDATE_TOKEN，不落盘、不回传前端。
+	Token string `json:"-"`
+}
+
 // MDNS 是局域网发现配置。
 type MDNS struct {
 	Enabled  bool   `json:"enabled"`
@@ -38,6 +47,7 @@ type Config struct {
 	MaxTextBytes    int    `json:"max_text_bytes"`
 	SessionTTLHours int    `json:"session_ttl_hours"`
 	MDNS            MDNS   `json:"mdns"`
+	Update          Update `json:"update"`
 
 	// Origins 记录每个字段来自哪一层（default/file/env/web），供网页标注来源。
 	Origins map[string]string `json:"-"`
@@ -55,6 +65,7 @@ func Defaults() Config {
 		MaxTextBytes:    65536,
 		SessionTTLHours: 168,
 		MDNS:            MDNS{Enabled: true, Hostname: "lanbox"},
+		Update:          Update{Check: "daily"},
 	}
 	c.Origins = defaultOrigins()
 	return c
@@ -66,6 +77,7 @@ var editableKeys = []string{
 	"max_file_size_mb", "max_item_size_mb", "min_free_disk_mb",
 	"max_files_per_item", "max_text_bytes", "session_ttl_hours",
 	"mdns.enabled", "mdns.hostname", "mdns.instance",
+	"update.check", "update.url",
 }
 
 // EditableKeys 返回网页可读写字段名（副本）。
@@ -87,7 +99,7 @@ func presentKeys(raw []byte) []string {
 	}
 	var out []string
 	for k, v := range top {
-		if k == "tls" || k == "mdns" {
+		if k == "tls" || k == "mdns" || k == "update" {
 			var nested map[string]json.RawMessage
 			if err := json.Unmarshal(v, &nested); err == nil {
 				for nk := range nested {
@@ -224,6 +236,16 @@ func applyEnv(c *Config, origins map[string]string) error {
 		c.MDNS.Instance = v
 		mark("mdns.instance")
 	}
+	if v, ok := os.LookupEnv("LANBOX_UPDATE_CHECK"); ok {
+		c.Update.Check = strings.ToLower(strings.TrimSpace(v))
+		mark("update.check")
+	}
+	if v, ok := os.LookupEnv("LANBOX_UPDATE_URL"); ok {
+		c.Update.URL = strings.TrimSpace(v)
+		mark("update.url")
+	}
+	// 令牌只走环境变量：不落 config.json、不出现在 /api/config。
+	c.Update.Token = os.Getenv("LANBOX_UPDATE_TOKEN")
 	return nil
 }
 
@@ -268,6 +290,16 @@ func (c Config) Validate() error {
 	}
 	if err := validateLabel(c.MDNS.Hostname, "mdns.hostname"); err != nil {
 		return err
+	}
+	switch c.Update.Check {
+	case "", "off", "startup", "daily":
+	default:
+		return fmt.Errorf("update.check 只能是 off / startup / daily，当前是 %q", c.Update.Check)
+	}
+	if u := c.Update.URL; u != "" {
+		if !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") {
+			return errors.New("update.url 必须以 https:// 或 http:// 开头")
+		}
 	}
 	if c.MDNS.Instance != "" {
 		if n := utf8.RuneCountInString(c.MDNS.Instance); n > 63 {

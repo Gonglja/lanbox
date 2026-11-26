@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -223,5 +224,65 @@ func TestListenPort(t *testing.T) {
 		if got := c.ListenPort(); got != want {
 			t.Fatalf("ListenPort(%q)=%d，期望 %d", in, got, want)
 		}
+	}
+}
+
+func TestUpdateDefaultsAndEnv(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.json")
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	if c.Update.Check != "daily" || c.Update.URL != "" || c.Update.Token != "" {
+		t.Fatalf("更新配置默认值不对: %+v", c.Update)
+	}
+	if c.Origins["update.check"] != "default" || c.Origins["update.url"] != "default" {
+		t.Fatalf("来源标注不对: %v", c.Origins)
+	}
+
+	t.Setenv("LANBOX_UPDATE_CHECK", "OFF")
+	t.Setenv("LANBOX_UPDATE_URL", "https://example.com/latest.json")
+	t.Setenv("LANBOX_UPDATE_TOKEN", "secret")
+	c, err = Load(p)
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	if c.Update.Check != "off" || c.Update.URL != "https://example.com/latest.json" || c.Update.Token != "secret" {
+		t.Fatalf("环境变量未生效: %+v", c.Update)
+	}
+	if c.Origins["update.check"] != "env" || c.Origins["update.url"] != "env" {
+		t.Fatalf("来源标注不对: %v", c.Origins)
+	}
+}
+
+func TestUpdateConfigRejected(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.json")
+	cases := map[string]string{
+		`{"update":{"check":"hourly"}}`:                      "update.check",
+		`{"update":{"url":"ftp://example.com/latest.json"}}`: "update.url",
+		`{"update":{"url":"example.com/latest.json"}}`:       "update.url",
+	}
+	for body, want := range cases {
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Load(p)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("%s 期望报错提及 %s，得到 %v", body, want, err)
+		}
+	}
+}
+
+func TestUpdateTokenNotSerialized(t *testing.T) {
+	c := Defaults()
+	c.Update.Token = "secret"
+	b, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "secret") {
+		t.Fatal("令牌不该出现在配置 JSON 里")
 	}
 }
