@@ -1,4 +1,4 @@
-// lanbox：内外网共享的中转站。
+// lanbox：文件与消息共享服务。
 package main
 
 import (

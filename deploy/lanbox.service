@@ -1,5 +1,5 @@
 [Unit]
-Description=lanbox 内外网共享中转站
+Description=lanbox 文件与消息共享服务
 After=network-online.target
 Wants=network-online.target
 
