@@ -87,6 +87,19 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	return true
 }
 
+// uploadPath 从 multipart 字段名解析附件相对路径。
+// 新前端/CLI 用 "files:<相对路径>"；旧前端用 "files" + filename。
+// 返回 isFile=false 表示这不是文件字段。
+func uploadPath(field, filename string) (path string, isFile bool) {
+	if rel, ok := strings.CutPrefix(field, "files:"); ok {
+		return rel, true // rel 为空也交给 store 判错
+	}
+	if filename != "" {
+		return filename, true
+	}
+	return "", false
+}
+
 // attachmentHeader 构造同时兼容老浏览器与 UTF-8 文件名的 Content-Disposition。
 func attachmentHeader(name string) string {
 	ascii := strings.Map(func(r rune) rune {

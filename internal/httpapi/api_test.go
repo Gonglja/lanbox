@@ -757,3 +757,106 @@ func TestUploadItemTooLargeMapsTo413(t *testing.T) {
 		t.Fatalf("文案应带上单条上限 %dMB: %s", e.cfg.MaxItemSizeMB, body)
 	}
 }
+
+func TestUploadKeepsRelativePaths(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+
+	it := e.uploadParts(t, []uploadPart{
+		{field: "files:photos/2024/a.jpg", filename: "a.jpg", body: "jpeg-bytes"},
+		{field: "files", filename: "b.txt", body: "hello"},
+	})
+	if len(it.Files) != 2 {
+		t.Fatalf("应有 2 个附件: %+v", it.Files)
+	}
+	if it.Files[0].Path != "photos/2024/a.jpg" || it.Files[0].Name != "a.jpg" {
+		t.Fatalf("路径字段不对: %+v", it.Files[0])
+	}
+	if it.Files[1].Path != "b.txt" {
+		t.Fatalf("旧字段 files 应按文件名回退，得到 %+v", it.Files[1])
+	}
+}
+
+func TestUploadRejectsBadPath(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	part, err := mw.CreateFormFile("files:../../etc/passwd", "passwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	mw.Close()
+
+	req, err := http.NewRequest(http.MethodPost, e.srv.URL+"/api/items", &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, body := e.do(t, req)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("非法路径应 400，得到 %d %s", resp.StatusCode, body)
+	}
+	var eb struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &eb); err != nil {
+		t.Fatal(err)
+	}
+	if eb.Error.Code != "bad_path" {
+		t.Fatalf("错误码应为 bad_path，得到 %q", eb.Error.Code)
+	}
+
+	_, body = e.do(t, e.newJSONReq(t, http.MethodGet, "/api/items", nil))
+	var list struct {
+		Items []store.Item `json:"items"`
+	}
+	if err := json.Unmarshal(body, &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 0 {
+		t.Fatalf("失败的上传不应留下内容: %+v", list.Items)
+	}
+}
+
+// uploadPart 描述一次 multipart 文件 part。
+type uploadPart struct {
+	field    string // 字段名，如 "files:photos/a.jpg"
+	filename string
+	body     string
+}
+
+// uploadParts 用自定义字段名上传并返回解析后的内容。
+func (e *env) uploadParts(t *testing.T, parts []uploadPart) store.Item {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	for _, p := range parts {
+		w, err := mw.CreateFormFile(p.field, p.filename)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte(p.body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, e.srv.URL+"/api/items", &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, body := e.do(t, req)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("上传应 201，得到 %d %s", resp.StatusCode, body)
+	}
+	return decodeItem(t, body)
+}
