@@ -390,6 +390,89 @@ async function doSaveSettings() {
   }
 }
 
+
+// ---------- 主题（与服务端 Web UI 完全一致：system/light/dark/paper） ----------
+
+const THEME_KEY = 'lanbox.theme';
+const THEME_VALID = ['system', 'light', 'dark', 'paper'];
+const themeMedia = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+let themePref = readThemePref();
+
+function readThemePref() {
+  try {
+    const v = localStorage.getItem(THEME_KEY);
+    if (THEME_VALID.includes(v)) return v;
+  } catch (e) {
+    /* 隐私模式忽略 */
+  }
+  return 'system';
+}
+
+function resolveTheme(pref) {
+  if (pref === 'system') return themeMedia && themeMedia.matches ? 'dark' : 'light';
+  return pref;
+}
+
+function applyTheme() {
+  const theme = resolveTheme(themePref);
+  const root = document.documentElement;
+  root.dataset.theme = theme;
+  root.dataset.themePref = themePref;
+  root.style.colorScheme = theme === 'dark' ? 'dark' : 'light';
+  document.querySelectorAll('#theme-menu [data-theme-value]').forEach((btn) => {
+    btn.setAttribute('aria-checked', String(btn.dataset.themeValue === themePref));
+  });
+}
+
+function setThemePref(v) {
+  if (!THEME_VALID.includes(v)) return;
+  themePref = v;
+  try {
+    localStorage.setItem(THEME_KEY, v);
+  } catch (e) {
+    /* 存不下就只在本次生效 */
+  }
+  applyTheme();
+  closeThemeMenu();
+}
+
+function openThemeMenu() {
+  const menu = $('theme-menu');
+  const btn = $('theme-btn');
+  menu.hidden = false;
+  const r = btn.getBoundingClientRect();
+  const w = menu.offsetWidth || 176;
+  const left = Math.max(8, Math.min(window.innerWidth - w - 8, r.right - w));
+  menu.style.left = left + 'px';
+  menu.style.top = r.bottom + 6 + 'px';
+  btn.setAttribute('aria-expanded', 'true');
+  const active = menu.querySelector('[aria-checked="true"]') || menu.querySelector('button');
+  if (active) active.focus();
+}
+
+function closeThemeMenu() {
+  const menu = $('theme-menu');
+  if (!menu || menu.hidden) return;
+  menu.hidden = true;
+  $('theme-btn').setAttribute('aria-expanded', 'false');
+}
+
+function toggleThemeMenu() {
+  if ($('theme-menu').hidden) openThemeMenu();
+  else closeThemeMenu();
+}
+
+function initTheme() {
+  applyTheme();
+  if (themeMedia) {
+    const onChange = () => {
+      if (themePref === 'system') applyTheme();
+    };
+    if (themeMedia.addEventListener) themeMedia.addEventListener('change', onChange);
+    else if (themeMedia.addListener) themeMedia.addListener(onChange);
+  }
+}
+
 // ---------- 事件绑定 ----------
 
 function autoGrow() {
@@ -408,6 +491,24 @@ function bind() {
   $('probe-btn').addEventListener('click', doProbe);
   $('login-btn').addEventListener('click', doLogin);
   $('save-settings-btn').addEventListener('click', doSaveSettings);
+  $('theme-btn').addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    toggleThemeMenu();
+  });
+  $('theme-menu').addEventListener('click', (ev) => {
+    const btn = ev.target.closest('button[data-theme-value]');
+    if (btn) setThemePref(btn.dataset.themeValue);
+  });
+  document.addEventListener('click', (ev) => {
+    const menu = $('theme-menu');
+    if (menu.hidden) return;
+    if (menu.contains(ev.target) || $('theme-btn').contains(ev.target)) return;
+    closeThemeMenu();
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') closeThemeMenu();
+  });
+  window.addEventListener('resize', closeThemeMenu);
   $('open-log-btn').addEventListener('click', async () => {
     try { await call('OpenLog'); } catch (e) { toast(errText(e)); }
   });
@@ -473,6 +574,7 @@ function subscribe() {
 // ---------- 启动 ----------
 
 async function boot() {
+  initTheme();
   bind();
   subscribe();
   try {

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>lanbox</title>
+<script src="/theme-boot.js"></script>
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
@@ -66,6 +67,7 @@
     <span id="user-label"></span>
     <span id="version-label"></span>
     <div class="topbar-actions">
+      <button id="theme-btn" class="btn btn-sm btn-icon" title="外观" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 2.2a5.8 5.8 0 1 0 0 11.6c.9 0 1.4-.6 1.4-1.3 0-.4-.2-.7-.4-1-.2-.2-.3-.4-.3-.7 0-.5.4-.9 1-.9h1.1A3.4 3.4 0 0 0 14 6.6C14 4.1 11.3 2.2 8 2.2Z"/><circle cx="5.4" cy="6" r=".85" fill="currentColor" stroke="none"/><circle cx="8" cy="4.8" r=".85" fill="currentColor" stroke="none"/><circle cx="10.6" cy="6.2" r=".85" fill="currentColor" stroke="none"/></svg></button>
       <button id="pause-btn" class="btn btn-sm">暂停</button>
       <button id="logout-btn" class="btn btn-sm btn-ghost" title="退出登录">退出</button>
     </div>
@@ -140,6 +142,22 @@
     </section>
   </main>
 </section>
+
+
+<div id="theme-menu" class="menu" role="menu" aria-label="外观主题" hidden>
+  <button type="button" role="menuitemradio" data-theme-value="system" aria-checked="false">
+    <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="5.6"/><path d="M8 2.4v11.2" /><path d="M8 2.4a5.6 5.6 0 0 1 0 11.2Z" fill="currentColor" stroke="none"/></svg></span><span>跟随系统</span><span class="icon menu-check"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3.4 8.4l3 3 6.2-6.6"/></svg></span>
+  </button>
+  <button type="button" role="menuitemradio" data-theme-value="light" aria-checked="false">
+    <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="3"/><path d="M8 1.3v1.6M8 13.1v1.6M1.3 8h1.6M13.1 8h1.6M3.3 3.3l1.1 1.1M11.6 11.6l1.1 1.1M12.7 3.3l-1.1 1.1M4.4 11.6l-1.1 1.1"/></svg></span><span>亮色</span><span class="icon menu-check"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3.4 8.4l3 3 6.2-6.6"/></svg></span>
+  </button>
+  <button type="button" role="menuitemradio" data-theme-value="dark" aria-checked="false">
+    <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8Z"/></svg></span><span>暗色</span><span class="icon menu-check"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3.4 8.4l3 3 6.2-6.6"/></svg></span>
+  </button>
+  <button type="button" role="menuitemradio" data-theme-value="paper" aria-checked="false">
+    <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M3.4 2.2h6.2l3 3v8.6H3.4z"/><path d="M9.4 2.4v3.1h3"/><path d="M5.4 8.4h5.2M5.4 10.8h5.2"/></svg></span><span>纸张</span><span class="icon menu-check"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3.4 8.4l3 3 6.2-6.6"/></svg></span>
+  </button>
+</div>
 
 <div id="toast" class="toast" hidden></div>
 <div id="drop-overlay" class="drop-overlay" hidden><span>松开鼠标即可上传</span></div>
