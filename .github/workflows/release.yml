@@ -83,11 +83,12 @@ jobs:
             grep -v '^#' .ci-logs/vet.log | head -10 | while IFS= read -r l; do echo "::error title=go vet::$(printf '%s' "$l" | cut -c1-350)"; done
           fi
           if [ $trc -ne 0 ]; then
-            # 把 panic 现场与失败行贴到 annotation（完整日志要登录才能看）
+            # 把 panic 现场与失败块贴到 annotation（完整日志要登录才能看）。
+            # 每个 step 最多 10 条 annotation，所以 panic 4 行 + 失败块 6 行。
             if grep -q '^panic:' .ci-logs/test.log; then
-              grep -A8 -m1 '^panic:' .ci-logs/test.log | head -9 | while IFS= read -r l; do echo "::error title=panic::$(printf '%s' "$l" | cut -c1-350)"; done
+              grep -A3 -m1 '^panic:' .ci-logs/test.log | head -4 | while IFS= read -r l; do echo "::error title=panic::$(printf '%s' "$l" | cut -c1-350)"; done
             fi
-            grep -E '^(--- FAIL|FAIL[[:space:]])' .ci-logs/test.log | head -4 | while IFS= read -r l; do echo "::error title=go test::$(printf '%s' "$l" | cut -c1-350)"; done
+            grep -A5 -e '^--- FAIL' .ci-logs/test.log | head -6 | while IFS= read -r l; do echo "::error title=gotest::$(printf '%s' "$l" | cut -c1-350)"; done
           fi
           [ $vrc -eq 0 ] && [ $trc -eq 0 ]
 
