@@ -62,7 +62,17 @@ func collectUploads(paths []string, recursive bool) ([]client.Upload, error) {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
-	return out, nil
+	// 同一个文件可能被多次指定（如 put -r dir dir/f.txt），按 Path 去重保留第一个。
+	deduped := out[:0]
+	seen := make(map[string]bool, len(out))
+	for _, u := range out {
+		if seen[u.Path] {
+			continue
+		}
+		seen[u.Path] = true
+		deduped = append(deduped, u)
+	}
+	return deduped, nil
 }
 
 func newUpload(relPath, diskPath string, size int64) client.Upload {

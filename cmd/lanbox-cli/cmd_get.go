@@ -6,9 +6,64 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"lanbox/internal/client"
 )
+
+// downloadedFile 是一条成功下载的记录，同时用于 JSON 输出。
+type downloadedFile struct {
+	Path string `json:"path"`
+	Size int64  `json:"size"`
+}
+
+// downloadSummary 汇总下载结果。
+type downloadSummary struct {
+	Downloaded []downloadedFile
+	Skipped    []string
+	Failed     []string
+}
+
+// withNoneFailed 判断是否全部成功（没有失败项）。
+func (s *downloadSummary) withNoneFailed() bool { return len(s.Failed) == 0 }
+
+// err 把失败聚合成一个错误；没有失败时返回 nil。
+func (s *downloadSummary) err() error {
+	if s.withNoneFailed() {
+		return nil
+	}
+	return fmt.Errorf("%d 个文件下载失败: %s", len(s.Failed), strings.Join(s.Failed, ", "))
+}
+
+// getJSON 是 get --json 的输出结构，字段按实际情况出现。
+type getJSON struct {
+	Downloaded []downloadedFile `json:"downloaded,omitempty"`
+	Skipped    []string         `json:"skipped,omitempty"`
+	Text       string           `json:"text,omitempty"`
+}
+
+// safeJoin 把内容内的相对路径安全地拼到 base 下，越界返回错误。
+func safeJoin(base, rel string) (string, error) {
+	clean := filepath.Clean(filepath.FromSlash(rel))
+	if clean == "." || filepath.IsAbs(clean) || clean == ".." ||
+		strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("服务端返回的路径不安全: %q", rel)
+	}
+	dest := filepath.Join(base, clean)
+	// 用绝对路径复核前缀：base 为 "." 之类的相对路径时直接比较会误判。
+	absBase, err := filepath.Abs(base)
+	if err != nil {
+		return "", err
+	}
+	absDest, err := filepath.Abs(dest)
+	if err != nil {
+		return "", err
+	}
+	if absDest != absBase && !strings.HasPrefix(absDest, absBase+string(filepath.Separator)) {
+		return "", fmt.Errorf("服务端返回的路径不安全: %q", rel)
+	}
+	return dest, nil
+}
 
 // cmdGet 下载某条内容的附件或整条 zip。
 func cmdGet(ctx context.Context, g *globals, args []string) error {
@@ -40,8 +95,17 @@ func cmdGet(ctx context.Context, g *globals, args []string) error {
 		if len(it.Files) == 0 {
 			return fmt.Errorf("这条内容没有附件，无法打包")
 		}
-		if err := c.DownloadZip(ctx, it.ID, *zipPath); err != nil {
+		// 是否存在交给 client 判断，这样 --force 的语义只有一处。
+		err := c.DownloadZip(ctx, it.ID, *zipPath, *force)
+		if errors.Is(err, client.ErrExists) {
+			fmt.Fprintf(g.stderr, "跳过已存在：%s\n", *zipPath)
+			return nil
+		}
+		if err != nil {
 			return err
+		}
+		if g.json {
+			return printJSON(g.stdout, map[string]any{"zip": *zipPath, "files": len(it.Files)})
 		}
 		fmt.Fprintf(g.stdout, "已保存 %s（%d 个附件）\n", *zipPath, len(it.Files))
 		return nil
@@ -49,6 +113,12 @@ func cmdGet(ctx context.Context, g *globals, args []string) error {
 
 	// 纯文字内容直接打印。
 	if len(it.Files) == 0 {
+		if *resume {
+			fmt.Fprintln(g.stderr, "提示: --resume 只对附件下载生效")
+		}
+		if g.json {
+			return printJSON(g.stdout, getJSON{Text: it.Text})
+		}
 		fmt.Fprint(g.stdout, it.Text)
 		if it.Text != "" {
 			fmt.Fprintln(g.stdout)
@@ -56,14 +126,32 @@ func cmdGet(ctx context.Context, g *globals, args []string) error {
 		return nil
 	}
 
+	// 需要落盘时先确认 -o 是个目录，避免写出 -o 指定的文件名。
+	if st, err := os.Stat(*out); err == nil && !st.IsDir() {
+		return fmt.Errorf("%w: -o %s 不是目录", errUsage, *out)
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("检查 -o 目录失败: %w", err)
+	}
+
 	tty := isTerminal(os.Stderr.Fd())
 	single := len(it.Files) == 1
+	if *resume && !single {
+		// 提示放在循环之前，免得被逐文件进度覆盖。
+		fmt.Fprintln(g.stderr, "提示: --resume 只对单附件内容生效")
+	}
+
+	sum := &downloadSummary{}
 	for _, f := range it.Files {
 		rel := f.RelPath()
 		if single {
 			rel = filepath.Base(rel)
 		}
-		dest := filepath.Join(*out, filepath.FromSlash(rel))
+		dest, err := safeJoin(*out, rel)
+		if err != nil {
+			fmt.Fprintf(g.stderr, "跳过不安全的路径 %s：%v\n", rel, err)
+			sum.Failed = append(sum.Failed, rel)
+			continue
+		}
 		opts := client.DownloadOptions{
 			Dest:   dest,
 			Force:  *force,
@@ -74,21 +162,38 @@ func cmdGet(ctx context.Context, g *globals, args []string) error {
 				}
 			},
 		}
-		err := c.DownloadFile(ctx, it.ID, f, opts)
-		if errors.Is(err, client.ErrExists) {
-			fmt.Fprintf(g.stdout, "跳过已存在：%s\n", dest)
-			continue
-		}
+		err = c.DownloadFile(ctx, it.ID, f, opts)
 		if tty {
 			fmt.Fprint(g.stderr, "\r\x1b[K")
 		}
+		if errors.Is(err, client.ErrExists) {
+			fmt.Fprintf(g.stderr, "跳过已存在：%s\n", dest)
+			sum.Skipped = append(sum.Skipped, dest)
+			continue
+		}
 		if err != nil {
+			// 单个文件失败不影响其余文件，最后再汇总报错。
+			fmt.Fprintf(g.stderr, "下载失败 %s：%v\n", dest, err)
+			sum.Failed = append(sum.Failed, dest)
+			continue
+		}
+		sum.Downloaded = append(sum.Downloaded, downloadedFile{Path: dest, Size: f.Size})
+		if !g.json {
+			fmt.Fprintf(g.stdout, "已下载 %s（%s）\n", dest, fmtBytes(f.Size))
+		}
+	}
+
+	if g.json {
+		if err := printJSON(g.stdout, getJSON{
+			Downloaded: sum.Downloaded,
+			Skipped:    sum.Skipped,
+		}); err != nil {
 			return err
 		}
-		fmt.Fprintf(g.stdout, "已下载 %s（%s）\n", dest, fmtBytes(f.Size))
 	}
-	if *resume && !single {
-		fmt.Fprintln(g.stderr, "提示: --resume 只对单附件内容生效")
+	// 有失败时返回聚合错误（退出码 1），全部成功才算成功。
+	if !sum.withNoneFailed() {
+		return sum.err()
 	}
 	return nil
 }

@@ -405,7 +405,7 @@ func TestDownloadZip(t *testing.T) {
 		t.Fatal(err)
 	}
 	dest := filepath.Join(t.TempDir(), "out.zip")
-	if err := c.DownloadZip(ctx, it.ID, dest); err != nil {
+	if err := c.DownloadZip(ctx, it.ID, dest, false); err != nil {
 		t.Fatalf("下载 zip 失败: %v", err)
 	}
 	zr, err := zip.OpenReader(dest)
@@ -419,5 +419,29 @@ func TestDownloadZip(t *testing.T) {
 	}
 	if len(names) != 2 || names[0] != "d/a.txt" || names[1] != "b.txt" {
 		t.Fatalf("zip 条目不对: %+v", names)
+	}
+}
+
+// TestDownloadZipRespectsForce 断言 zip 目标已存在时需显式 Force 才覆盖。
+func TestDownloadZipRespectsForce(t *testing.T) {
+	e := newTestEnv(t)
+	c := loginClient(t, e)
+	ctx := context.Background()
+	it, err := c.Put(ctx, "", []client.Upload{{Path: "a.txt", Size: 1, Open: readerFunc("a")}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "out.zip")
+	if err := c.DownloadZip(ctx, it.ID, dest, false); err != nil {
+		t.Fatalf("首次下载 zip 失败: %v", err)
+	}
+	if err := c.DownloadZip(ctx, it.ID, dest, false); !errors.Is(err, client.ErrExists) {
+		t.Fatalf("已存在且未 Force 应返回 ErrExists，得到 %v", err)
+	}
+	if err := c.DownloadZip(ctx, it.ID, dest, true); err != nil {
+		t.Fatalf("Force 覆盖失败: %v", err)
+	}
+	if _, err := os.Stat(dest + ".part"); !os.IsNotExist(err) {
+		t.Fatal("成功 rename 后不应残留 .part")
 	}
 }

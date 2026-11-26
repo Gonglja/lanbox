@@ -73,3 +73,46 @@ func TestCollectUploadsDirWithoutRecursiveFlag(t *testing.T) {
 		t.Fatal("目录未加 -r 应报错")
 	}
 }
+
+// TestCollectUploadsDedupesPaths 断言重复路径（如 put -r dir dir/f.txt）只保留第一个。
+func TestCollectUploadsDedupesPaths(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "photos")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "a.txt")
+	if err := os.WriteFile(file, []byte("a"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	// 同一目录被指定两次时，Path 会完全相同，必须去重。
+	ups, err := collectUploads([]string{dir, dir}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ups) != 1 || ups[0].Path != "photos/a.txt" {
+		t.Fatalf("重复目录应去重为 1 个文件，得到 %+v", ups)
+	}
+	// 同一文件被指定两次时同理。
+	ups, err = collectUploads([]string{file, file}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ups) != 1 {
+		t.Fatalf("重复文件应去重为 1 个，得到 %+v", ups)
+	}
+	// 目录 + 目录内文件：单文件保留 basename，所以 Path 不同、都应保留。
+	ups, err = collectUploads([]string{dir, file}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]int{}
+	for _, u := range ups {
+		seen[u.Path]++
+	}
+	for p, n := range seen {
+		if n > 1 {
+			t.Fatalf("路径 %q 重复 %d 次", p, n)
+		}
+	}
+}

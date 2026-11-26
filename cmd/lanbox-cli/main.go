@@ -179,15 +179,15 @@ func usage(w io.Writer) {
 
 命令:
   login [-u 用户名]        登录并保存会话
-  logout                   注销并删除本地会话
+  logout [--json]          注销并删除本地会话
   whoami                   显示当前身份
   put [-m 文本] [-r] 路径…  发布文字/文件/目录（- 表示从 stdin 读文本）
   ls [-n 数量] [-q 关键词] [--todo] [-o]  列出内容（-o 同时打印附件）
   files ID                 列出某条内容的附件
-  get ID [-o 目录] [--zip 文件] [--force] [--resume]
+  get ID [-o 目录] [--zip 文件] [--force] [--resume] [--json]
   taken ID [--undo]        标记/取消已取走
-  rm ID                    删除整条内容
-  rm-file ID FID           删除单个附件
+  rm ID [--json]           删除整条内容
+  rm-file ID FID [--json]  删除单个附件
 
 用 -- 结束选项解析，其后的参数一律当作路径，例如 put -r -- -s。
 `)
@@ -316,6 +316,9 @@ func cmdLogout(ctx context.Context, g *globals, args []string) error {
 	}
 	if err := removeSession(); err != nil {
 		return err
+	}
+	if g.json {
+		return printJSON(g.stdout, map[string]string{"logged_out": sess.Username})
 	}
 	fmt.Fprintf(g.stdout, "已退出 %s（%s）\n", sess.Username, sess.URL)
 	return nil

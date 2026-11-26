@@ -139,7 +139,13 @@ func (p *progressReader) Read(b []byte) (int, error) {
 }
 
 // DownloadZip 下载整条内容的 zip 包（不支持续传）。
-func (c *Client) DownloadZip(ctx context.Context, itemID, dest string) error {
+// dest 已存在且 force 为 false 时返回 ErrExists；否则照常写 .part 再 rename。
+func (c *Client) DownloadZip(ctx context.Context, itemID, dest string, force bool) error {
+	if !force {
+		if _, err := os.Stat(dest); err == nil {
+			return ErrExists
+		}
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		c.base.String()+"/api/items/"+url.PathEscape(itemID)+"/zip", nil)
 	if err != nil {

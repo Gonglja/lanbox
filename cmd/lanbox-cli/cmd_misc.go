@@ -52,6 +52,9 @@ func cmdRm(ctx context.Context, g *globals, args []string) error {
 	if err := c.DeleteItem(ctx, pos[0]); err != nil {
 		return err
 	}
+	if g.json {
+		return printJSON(g.stdout, map[string]string{"deleted": pos[0]})
+	}
 	fmt.Fprintf(g.stdout, "已删除 %s\n", pos[0])
 	return nil
 }
@@ -72,6 +75,9 @@ func cmdRmFile(ctx context.Context, g *globals, args []string) error {
 	}
 	if err := c.DeleteFile(ctx, pos[0], pos[1]); err != nil {
 		return err
+	}
+	if g.json {
+		return printJSON(g.stdout, map[string]string{"deleted_file": pos[1]})
 	}
 	fmt.Fprintf(g.stdout, "已删除附件 %s\n", pos[1])
 	return nil
