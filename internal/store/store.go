@@ -97,7 +97,7 @@ type Options struct {
 	MinFreeBytes int64
 	MaxTextBytes int
 	MaxFiles     int   // 单条内容的附件数量上限，0 表示 DefaultMaxFiles
-	MaxItemBytes int64 // 单条内容的附件总字节上限，0 表示不限
+	MaxItemBytes int64 // 单条内容的附件总字节上限，0 表示 DefaultMaxItemBytes
 	FreeSpace    func(path string) (int64, error)
 }
 

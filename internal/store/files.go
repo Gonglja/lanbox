@@ -35,6 +35,17 @@ func (s *Store) maxFiles() int {
 	return DefaultMaxFiles
 }
 
+// MaxItemBytes 返回生效的单条内容附件总大小上限，供 httpapi 生成提示文案。
+func (s *Store) MaxItemBytes() int64 { return s.maxItemBytes() }
+
+// maxItemBytes 返回生效的单条总大小上限；0 表示未配置时回落到默认值。
+func (s *Store) maxItemBytes() int64 {
+	if s.opts.MaxItemBytes > 0 {
+		return s.opts.MaxItemBytes
+	}
+	return DefaultMaxItemBytes
+}
+
 // newFileID 生成附件 ID。
 func newFileID() string {
 	var b [4]byte
@@ -93,13 +104,9 @@ func (s *Store) AddFile(itemID, relPath string, declaredSize int64, r io.Reader)
 		return nil, ErrTooManyFiles
 	}
 
-	hasItemLimit := s.opts.MaxItemBytes > 0
-	var remaining int64
-	if hasItemLimit {
-		remaining = s.opts.MaxItemBytes - used
-		if remaining <= 0 {
-			return nil, ErrItemTooLarge
-		}
+	remaining := s.maxItemBytes() - used
+	if remaining <= 0 {
+		return nil, ErrItemTooLarge
 	}
 
 	finalPath := uniqueRelPath(taken, cleanPath, s.maxFiles()+1)
@@ -133,7 +140,7 @@ func (s *Store) AddFile(itemID, relPath string, declaredSize int64, r io.Reader)
 
 	// 读取上限取单文件上限与单条剩余额度的较小值，超限时立即中止。
 	limit := s.opts.MaxFileBytes
-	if hasItemLimit && (limit <= 0 || remaining < limit) {
+	if limit <= 0 || remaining < limit {
 		limit = remaining
 	}
 	var src io.Reader = r
@@ -155,7 +162,7 @@ func (s *Store) AddFile(itemID, relPath string, declaredSize int64, r io.Reader)
 		os.Remove(diskPath)
 		return nil, ErrTooLarge
 	}
-	if hasItemLimit && n > remaining {
+	if n > remaining {
 		os.Remove(diskPath)
 		return nil, ErrItemTooLarge
 	}

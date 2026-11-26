@@ -58,7 +58,7 @@ func (s *Server) writeStoreErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "bad_path", "附件路径不合法")
 	case errors.Is(err, store.ErrItemTooLarge):
 		writeError(w, http.StatusRequestEntityTooLarge, "item_too_large",
-			fmt.Sprintf("单条内容超过 %dMB 上限", s.cfg.MaxItemSizeMB))
+			fmt.Sprintf("单条内容超过 %dMB 上限", s.store.MaxItemBytes()>>20))
 	case errors.Is(err, store.ErrTextTooLong):
 		writeError(w, http.StatusBadRequest, "text_too_long",
 			fmt.Sprintf("文本超过 %d 字节上限", s.cfg.MaxTextBytes))

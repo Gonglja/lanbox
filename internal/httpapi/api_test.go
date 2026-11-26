@@ -35,6 +35,10 @@ type env struct {
 	adminPassword string
 }
 
+// testMaxFilesPerItem 刻意取小值，让「超过附件数量」的用例只需几十个 part；
+// 夹具上限是 20，任何单条内容超过 20 个附件的测试都会拿到 400 too_many_files。
+const testMaxFilesPerItem = 20
+
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	cfg := config.Defaults()
@@ -42,7 +46,7 @@ func newEnv(t *testing.T) *env {
 	cfg.MaxFileSizeMB = 8
 	cfg.MaxItemSizeMB = 16
 	cfg.MinFreeDiskMB = 0
-	cfg.MaxFilesPerItem = 20
+	cfg.MaxFilesPerItem = testMaxFilesPerItem
 
 	st, err := store.Open(filepath.Join(cfg.DataDir, "items"), store.Options{
 		MaxFileBytes: cfg.MaxFileBytes(),
@@ -711,5 +715,45 @@ func TestUploadTooManyFilesMessageUsesConfig(t *testing.T) {
 	}
 	if !bytes.Contains(body, []byte(fmt.Sprintf("不能超过 %d 个", e.cfg.MaxFilesPerItem))) {
 		t.Fatalf("文案应带上实际上限 %d: %s", e.cfg.MaxFilesPerItem, body)
+	}
+}
+
+func TestUploadItemTooLargeMapsTo413(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+
+	// 夹具 MaxItemSizeMB=16、MaxFileSizeMB=8。同一条内容里先放 8MiB + 4MiB，
+	// 再用 5MiB 触发：单文件没超 8MiB，但单条只剩 4MiB，必须命中 ErrItemTooLarge 而不是 ErrTooLarge。
+	// 三个 part 必须在同一次请求里，否则每次上传都会新建一条内容，额度不会累积。
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	for _, f := range []struct {
+		name string
+		size int
+	}{{"a.bin", 8 << 20}, {"b.bin", 4 << 20}, {"c.bin", 5 << 20}} {
+		part, err := mw.CreateFormFile("files", f.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := part.Write(bytes.Repeat([]byte("x"), f.size)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mw.Close()
+
+	req, err := http.NewRequest(http.MethodPost, e.srv.URL+"/api/items", &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, body := e.do(t, req)
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("超过单条总大小应 413，得到 %d %s", resp.StatusCode, body)
+	}
+	if !bytes.Contains(body, []byte("item_too_large")) {
+		t.Fatalf("错误码应为 item_too_large: %s", body)
+	}
+	if !bytes.Contains(body, []byte(fmt.Sprintf("%dMB", e.cfg.MaxItemSizeMB))) {
+		t.Fatalf("文案应带上单条上限 %dMB: %s", e.cfg.MaxItemSizeMB, body)
 	}
 }

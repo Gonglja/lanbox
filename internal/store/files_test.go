@@ -366,6 +366,22 @@ func TestAddFileMaxFilesOption(t *testing.T) {
 	}
 }
 
+func TestLimitsExposeEffectiveDefaults(t *testing.T) {
+	// 上限未配置时必须回落到默认值，httpapi 的提示文案才能与真实限额一致。
+	s := newStore(t, Options{})
+	if got := s.MaxFiles(); got != DefaultMaxFiles {
+		t.Fatalf("MaxFiles 应回落到 %d，得到 %d", DefaultMaxFiles, got)
+	}
+	if got := s.MaxItemBytes(); got != DefaultMaxItemBytes {
+		t.Fatalf("MaxItemBytes 应回落到 %d，得到 %d", DefaultMaxItemBytes, got)
+	}
+
+	custom := newStore(t, Options{MaxFiles: 2, MaxItemBytes: 5})
+	if custom.MaxFiles() != 2 || custom.MaxItemBytes() != 5 {
+		t.Fatalf("显式配置应生效: MaxFiles=%d MaxItemBytes=%d", custom.MaxFiles(), custom.MaxItemBytes())
+	}
+}
+
 func TestAddFileDedupeExhaustionIsDomainError(t *testing.T) {
 	// MaxFiles=3：a.txt、a~2.txt、a~3.txt 三次后第四次必须仍是领域错误，而不是 500 的普通 error。
 	s := newStore(t, Options{MaxFiles: 3})
