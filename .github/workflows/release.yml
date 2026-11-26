@@ -130,10 +130,14 @@ jobs:
           set -euo pipefail
           export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          ls "$ANDROID_SDK_ROOT"
+          id; ls -ld "$ANDROID_SDK_ROOT"
+          # 镜像里的 SDK 目录常属于 root，sdkmanager 写不进去
+          sudo chown -R "$(id -u):$(id -g)" "$ANDROID_SDK_ROOT" 2>/dev/null || true
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "ndk;${NDK_VERSION}" \
-            || { echo "::error::sdkmanager 安装 platform/build-tools/NDK 失败"; exit 1; }
+          if ! sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "ndk;${NDK_VERSION}" > /tmp/sdk.log 2>&1; then
+            tail -12 /tmp/sdk.log | while IFS= read -r l; do echo "::error title=sdkmanager::$(printf '%s' "$l" | cut -c1-350)"; done
+            exit 1
+          fi
           ls "$ANDROID_SDK_ROOT/ndk"
           echo "::notice::Android SDK 就绪: $ANDROID_SDK_ROOT"
 
