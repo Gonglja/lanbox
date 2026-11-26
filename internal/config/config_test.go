@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -125,5 +126,102 @@ func TestDirectoryLimitsEnvOverride(t *testing.T) {
 	}
 	if c.MaxFilesPerItem != 42 || c.MaxItemSizeMB != 64 {
 		t.Fatalf("环境变量未生效: %+v", c)
+	}
+}
+
+func TestMDNSDefaultsAndEnv(t *testing.T) {
+	c, err := Load(filepath.Join(t.TempDir(), "nope.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.MDNS.Enabled || c.MDNS.Hostname != "lanbox" || c.MDNS.Instance != "" {
+		t.Fatalf("mDNS 默认值不对: %+v", c.MDNS)
+	}
+	if c.Origins["mdns.enabled"] != "default" || c.Origins["mdns.hostname"] != "default" {
+		t.Fatalf("默认来源标注不对: %+v", c.Origins)
+	}
+
+	t.Setenv("LANBOX_MDNS_ENABLED", "off")
+	t.Setenv("LANBOX_MDNS_HOSTNAME", "nas-1")
+	t.Setenv("LANBOX_MDNS_INSTANCE", "机柜")
+	c, err = Load(filepath.Join(t.TempDir(), "nope.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.MDNS.Enabled || c.MDNS.Hostname != "nas-1" || c.MDNS.Instance != "机柜" {
+		t.Fatalf("环境变量未生效: %+v", c.MDNS)
+	}
+	for _, k := range []string{"mdns.enabled", "mdns.hostname", "mdns.instance"} {
+		if c.Origins[k] != "env" {
+			t.Fatalf("%s 来源应为 env，得到 %q", k, c.Origins[k])
+		}
+	}
+}
+
+func TestMDNSPresentKeysMarkedFile(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.json")
+	body := `{"mdns":{"hostname":"box"},"tls":{"cert_file":"/c.pem","key_file":"/k.pem"}}`
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Origins["mdns.hostname"] != "file" || c.Origins["mdns.enabled"] != "default" {
+		t.Fatalf("嵌套字段来源标注不对: %+v", c.Origins)
+	}
+	if c.Origins["tls.cert_file"] != "file" || c.Origins["tls.key_file"] != "file" {
+		t.Fatalf("tls 字段来源标注不对: %+v", c.Origins)
+	}
+}
+
+func TestMDNSValidation(t *testing.T) {
+	cases := []struct {
+		name    string
+		mdns    MDNS
+		wantErr bool
+	}{
+		{"默认", MDNS{Enabled: true, Hostname: "lanbox"}, false},
+		{"单字母", MDNS{Enabled: true, Hostname: "a"}, false},
+		{"带数字连字符", MDNS{Enabled: true, Hostname: "nas-01"}, false},
+		{"空主机名", MDNS{Enabled: true, Hostname: ""}, true},
+		{"大写", MDNS{Enabled: true, Hostname: "NAS"}, true},
+		{"下划线", MDNS{Enabled: true, Hostname: "my_nas"}, true},
+		{"点号", MDNS{Enabled: true, Hostname: "a.b"}, true},
+		{"首连字符", MDNS{Enabled: true, Hostname: "-a"}, true},
+		{"尾连字符", MDNS{Enabled: true, Hostname: "a-"}, true},
+		{"超长", MDNS{Enabled: true, Hostname: strings.Repeat("a", 64)}, true},
+		{"实例名可用中文", MDNS{Enabled: true, Hostname: "lanbox", Instance: "机柜一"}, false},
+		{"实例名含换行", MDNS{Enabled: true, Hostname: "lanbox", Instance: "a\nb"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Defaults()
+			c.MDNS = tc.mdns
+			err := c.Validate()
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("wantErr=%v，得到 %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestListenPort(t *testing.T) {
+	cases := map[string]int{
+		":8443":        8443,
+		"0.0.0.0:9443": 9443,
+		"[::1]:443":    443,
+		"":             8443,
+		"bad":          8443,
+		":notaport":    8443,
+	}
+	for in, want := range cases {
+		c := Defaults()
+		c.Listen = in
+		if got := c.ListenPort(); got != want {
+			t.Fatalf("ListenPort(%q)=%d，期望 %d", in, got, want)
+		}
 	}
 }
