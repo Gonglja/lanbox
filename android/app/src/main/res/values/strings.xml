@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">lanbox</string>
+    <string name="server_switch">启动服务</string>
+    <string name="open_ui">打开界面</string>
+    <string name="copy_addr">复制地址</string>
+    <string name="autostart">开机自启</string>
+    <string name="battery">加入电池优化白名单</string>
+    <string name="clear_data">清空本地数据</string>
+    <string name="logs_title">运行日志</string>
+    <string name="status_stopped">服务已停止</string>
+    <string name="status_running">服务运行中</string>
+    <string name="stop_service">停止服务</string>
+</resources>
