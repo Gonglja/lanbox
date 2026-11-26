@@ -182,7 +182,12 @@ jobs:
           export ANDROID_SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
           export ANDROID_NDK="$ANDROID_SDK/ndk/${NDK_VERSION}"
           chmod +x android/gradlew
-          make android || { echo "::error::make android 失败（看上面 gradle 输出）"; exit 1; }
+          if ! make android > /tmp/android.log 2>&1; then
+            echo "::error::make android 失败"
+            grep -i -m5 -e "error" -e "cannot" -e "undefined" /tmp/android.log | head -5 | while IFS= read -r l; do echo "::error title=android::$(printf '%s' "$l" | cut -c1-350)"; done || true
+            tail -4 /tmp/android.log | while IFS= read -r l; do echo "::error title=android-tail::$(printf '%s' "$l" | cut -c1-350)"; done
+            exit 1
+          fi
           ls -l dist/lanbox-android*.apk
 
       - name: 重新生成校验和（APK 是 dist 之后才产出的）
