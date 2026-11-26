@@ -212,3 +212,82 @@ func TestListTodoFilter(t *testing.T) {
 		t.Fatalf("搜索应命中已归档的合同: %+v", found.Items)
 	}
 }
+
+// readerFunc 把字符串包装成可重复打开的 Upload 内容源。
+func readerFunc(s string) func() (io.ReadCloser, error) {
+	return func() (io.ReadCloser, error) {
+		return io.NopCloser(strings.NewReader(s)), nil
+	}
+}
+
+func TestPutListTakenAndDelete(t *testing.T) {
+	e := newTestEnv(t)
+	c := loginClient(t, e)
+	ctx := context.Background()
+
+	var sent, total int64
+	it, err := c.Put(ctx, "内网素材", []client.Upload{
+		{Path: "photos/2024/a.jpg", Size: 3, Open: readerFunc("aaa")},
+		{Path: "notes.txt", Size: 5, Open: readerFunc("hello")},
+	}, func(s, tt int64) { sent, total = s, tt })
+	if err != nil {
+		t.Fatalf("上传失败: %v", err)
+	}
+	if it.Text != "内网素材" || len(it.Files) != 2 {
+		t.Fatalf("返回内容不对: %+v", it)
+	}
+	if it.Files[0].Path != "photos/2024/a.jpg" || it.Files[1].Path != "notes.txt" {
+		t.Fatalf("路径应保留: %+v", it.Files)
+	}
+	if sent != 8 || total <= 0 {
+		t.Fatalf("进度回调不对: sent=%d total=%d", sent, total)
+	}
+
+	got, err := c.List(ctx, client.ListQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("列表失败: %v", err)
+	}
+	if len(got.Items) != 1 || got.Items[0].ID != it.ID {
+		t.Fatalf("列表内容不对: %+v", got.Items)
+	}
+	if got.Items[0].TotalSize() != 8 {
+		t.Fatalf("总大小应为 8，得到 %d", got.Items[0].TotalSize())
+	}
+}
+
+func TestPutTextOnly(t *testing.T) {
+	e := newTestEnv(t)
+	c := loginClient(t, e)
+	it, err := c.Put(context.Background(), "只有文字", nil, nil)
+	if err != nil {
+		t.Fatalf("上传失败: %v", err)
+	}
+	if it.Text != "只有文字" || len(it.Files) != 0 {
+		t.Fatalf("返回内容不对: %+v", it)
+	}
+}
+
+func TestPutEmptyIsRejected(t *testing.T) {
+	e := newTestEnv(t)
+	c := loginClient(t, e)
+	_, err := c.Put(context.Background(), "  ", nil, nil)
+	var ae *client.Error
+	if !errors.As(err, &ae) || ae.Code != "empty" {
+		t.Fatalf("空内容应返回 empty 错误，得到 %v", err)
+	}
+}
+
+func TestPutKeepsNestedPaths(t *testing.T) {
+	e := newTestEnv(t)
+	c := loginClient(t, e)
+	it, err := c.Put(context.Background(), "", []client.Upload{
+		{Path: "素材/2024/a.jpg", Size: 1, Open: readerFunc("a")},
+		{Path: "素材/b.txt", Size: 1, Open: readerFunc("b")},
+	}, nil)
+	if err != nil {
+		t.Fatalf("上传失败: %v", err)
+	}
+	if it.Files[0].Path != "素材/2024/a.jpg" || it.Files[1].Path != "素材/b.txt" {
+		t.Fatalf("中文目录路径应保留: %+v", it.Files)
+	}
+}
