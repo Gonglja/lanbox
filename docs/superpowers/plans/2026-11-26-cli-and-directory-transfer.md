@@ -351,6 +351,165 @@ git commit -m "feat(store): 附件记录相对路径并兼容旧数据"
 
 ---
 
+## Task 3a: 附件磁盘名单一真源与按路径搜索
+
+**Files:**
+- Modify: `internal/store/files.go`（新增 `diskName`，`AddFile`/`FilePath`/`DeleteFile` 改用它）
+- Modify: `internal/store/store.go`（`Item.match`）
+- Test: `internal/store/files_test.go`
+
+> 为什么先做这一步：`AddFile`（写）、`FilePath`（读）、`DeleteFile`（删）各自拼 `<fid>__<name>`，其中 `DeleteFile` 没有空 `Name` 兜底，导致「`path` 有值、`name` 为空」的条目读得到、删不掉（孤儿文件静默泄漏）。`AddFile` 在 Task 3 要整段重写，先收敛真源最省事。
+
+- [ ] **Step 1: 写失败测试**
+
+在 `internal/store/files_test.go` 末尾追加：
+
+```go
+func TestDiskName(t *testing.T) {
+	cases := []struct {
+		f    File
+		want string
+	}{
+		{File{ID: "f1", Name: "a.txt", Path: "photos/a.txt"}, "f1__a.txt"},
+		{File{ID: "f2", Path: "photos/a.jpg"}, "f2__a.jpg"},
+		{File{ID: "f3"}, "f3__f3"},
+	}
+	for _, c := range cases {
+		if got := diskName(c.f); got != c.want {
+			t.Fatalf("diskName(%+v)=%q，期望 %q", c.f, got, c.want)
+		}
+	}
+}
+
+func TestRelPathFallsBackToID(t *testing.T) {
+	if got := (File{ID: "f0"}).RelPath(); got != "f0" {
+		t.Fatalf("双空时应回退 ID，得到 %q", got)
+	}
+}
+
+func TestFilePathUsesBasenameWhenNameEmpty(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "items")
+	dir := filepath.Join(root, "0000000000002-def")
+	if err := os.MkdirAll(filepath.Join(dir, "files"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	meta := `{"id":"0000000000002-def","created_at":"2026-01-01T00:00:00Z","created_by":"u","files":[{"id":"f9","path":"photos/2024/a.jpg","size":3}]}`
+	if err := os.WriteFile(filepath.Join(dir, "meta.json"), []byte(meta), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "files", "f9__a.jpg"), []byte("abc"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(root, Options{})
+	if err != nil {
+		t.Fatalf("打开存储失败: %v", err)
+	}
+	disk, f, err := s.FilePath("0000000000002-def", "f9")
+	if err != nil {
+		t.Fatalf("解析附件路径失败: %v", err)
+	}
+	if filepath.Base(disk) != "f9__a.jpg" {
+		t.Fatalf("应回退到 path 的 basename: %s", disk)
+	}
+	if f.RelPath() != "photos/2024/a.jpg" {
+		t.Fatalf("RelPath 应返回 path，得到 %q", f.RelPath())
+	}
+
+	// 删除也要走同一套磁盘名：没有兜底时会删 <fid>__ 而静默留下孤儿文件。
+	if _, err := s.DeleteFile("0000000000002-def", "f9"); err != nil {
+		t.Fatalf("删除附件失败: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "files", "f9__a.jpg")); !os.IsNotExist(err) {
+		t.Fatal("附件文件应已被删除")
+	}
+}
+
+func TestMatchMatchesNestedPath(t *testing.T) {
+	it := &Item{Files: []File{{ID: "f1", Path: "photos/2024/a.jpg", Name: "a.jpg"}}}
+	for _, needle := range []string{"photos", "photos/2024/a.jpg", "2024", "a.jpg"} {
+		if !it.match(strings.ToLower(needle)) {
+			t.Fatalf("%q 应命中路径", needle)
+		}
+	}
+	if it.match("videos") {
+		t.Fatal("不相关的关键词不应命中")
+	}
+
+	legacy := &Item{Files: []File{{ID: "f2", Name: "a.txt"}}}
+	if !legacy.match("a.txt") {
+		t.Fatal("旧数据（无 path）仍应按文件名命中")
+	}
+}
+```
+
+- [ ] **Step 2: 跑测试确认失败**
+
+Run: `go test ./internal/store -run 'TestDiskName|TestRelPathFallsBackToID|TestFilePathUsesBasename|TestMatchMatches' -v`
+Expected: 编译失败，`undefined: diskName`
+
+- [ ] **Step 3: 实现**
+
+`internal/store/files.go` 新增（放在 `AddFile` 之前）：
+
+```go
+// diskName 返回附件在 files/ 下的磁盘文件名：<文件ID>__<basename>。
+// 写（AddFile）、读（FilePath）、删（DeleteFile）共用，避免三处各自拼装后走偏。
+// 极端情况下 Path 与 Name 都为空（外部写入的 meta），退化为 <fid>__<fid>。
+func diskName(f File) string {
+	name := f.Name
+	if name == "" {
+		name = path.Base(f.RelPath())
+	}
+	return f.ID + "__" + name
+}
+```
+
+`FilePath` 收敛为：
+
+```go
+	p := filepath.Join(s.filesDir(itemID), diskName(*found))
+	return p, found, nil
+```
+
+`DeleteFile` 里的磁盘名同样改用 `diskName`：
+
+```go
+	diskPath := filepath.Join(s.filesDir(itemID), diskName(cp.Files[idx]))
+```
+
+`internal/store/store.go` 的 `Item.match` 改为（保留 `Name` 比较，旧数据行为完全等价）：
+
+```go
+func (it *Item) match(needleLower string) bool {
+	if strings.Contains(strings.ToLower(it.Text), needleLower) {
+		return true
+	}
+	for _, f := range it.Files {
+		// RelPath 覆盖完整路径，目录名也能被搜到；Name 兜底防 Path 与 Name 不一致。
+		if strings.Contains(strings.ToLower(f.RelPath()), needleLower) ||
+			strings.Contains(strings.ToLower(f.Name), needleLower) {
+			return true
+		}
+	}
+	return false
+}
+```
+
+- [ ] **Step 4: 跑测试确认通过**
+
+Run: `go test ./internal/store -v && go test ./... -count=1 && go vet ./... && gofmt -l .`
+Expected: 全绿、无输出
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add internal/store/files.go internal/store/store.go internal/store/files_test.go
+git commit -m "refactor(store): 磁盘名收敛为 diskName，搜索支持相对路径"
+```
+
+---
+
 ## Task 3: `AddFile` 支持路径、撞名去重与单条总大小
 
 **Files:**
@@ -592,7 +751,7 @@ func (s *Store) AddFile(itemID, relPath string, declaredSize int64, r io.Reader)
 	}
 
 	fid := newFileID()
-	diskPath := filepath.Join(s.filesDir(itemID), fid+"__"+base)
+	diskPath := filepath.Join(s.filesDir(itemID), diskName(File{ID: fid, Path: finalPath, Name: base}))
 
 	f, err := os.OpenFile(diskPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o640)
 	if err != nil {

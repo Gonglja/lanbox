@@ -49,8 +49,9 @@ type File struct {
 }
 ```
 
-- **零迁移**：旧 `meta.json` 没有 `path`。读取侧统一走 `func (f File) relPath() string`：`Path != "" ? Path : Name`。
-- 磁盘布局不变：`items/<id>/files/<fid>__<Name>`。`FilePath()` 仍按 `fid` 在 meta 里查找，再用 `Name` 拼后缀；`Name` 为空时用 `path.Base(relPath())` 兜底。
+- **零迁移**：旧 `meta.json` 没有 `path`。读取侧统一走导出的 `func (f File) RelPath() string`，三级回退 `Path → Name → ID`（双空只会出现在外部写入的 meta；退化为 ID 保证 zip 条目名、`ls`、去重集合都拿不到空字符串）。
+- 磁盘布局不变：`items/<id>/files/<fid>__<basename>`。磁盘名收敛为一个函数 `diskName(f File)`，写（`AddFile`）、读（`FilePath`）、删（`DeleteFile`）共用，避免三处各自拼装后走偏（曾出现「读得到、删不掉」的孤儿文件）。
+- 搜索按 `RelPath()` + `Name` 双比较，所以目录名也能命中；旧数据行为等价。
 - 旧前端的 `f.name`、`link download` 属性、单文件下载接口全部保持可用。
 
 ### 4.2 `SanitizeRelPath(raw string) (string, error)`
