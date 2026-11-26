@@ -198,3 +198,25 @@ func TestGetReturnsCopy(t *testing.T) {
 		t.Fatalf("外部修改返回值污染了存储: %q", again.Text)
 	}
 }
+
+func TestSetText(t *testing.T) {
+	s := newStore(t, Options{MaxTextBytes: 8})
+	it, _ := s.Create(CreateInput{CreatedBy: "u"})
+	got, err := s.SetText(it.ID, "  hi  ")
+	if err != nil {
+		t.Fatalf("设置文本失败: %v", err)
+	}
+	if got.Text != "hi" {
+		t.Fatalf("文本应裁剪空白: %q", got.Text)
+	}
+	reloaded, _ := s.Get(it.ID)
+	if reloaded.Text != "hi" {
+		t.Fatal("文本未持久化")
+	}
+	if _, err := s.SetText(it.ID, strings.Repeat("x", 9)); !errors.Is(err, ErrTextTooLong) {
+		t.Fatalf("超长文本应报 ErrTextTooLong，得到 %v", err)
+	}
+	if _, err := s.SetText("nope", "x"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("内容不存在应报 ErrNotFound，得到 %v", err)
+	}
+}

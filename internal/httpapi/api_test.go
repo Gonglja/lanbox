@@ -2,13 +2,17 @@ package httpapi_test
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -208,5 +212,174 @@ func TestSecurityHeaders(t *testing.T) {
 	}
 	if got := resp.Header.Get("X-Frame-Options"); got != "DENY" {
 		t.Fatalf("X-Frame-Options 不对: %q", got)
+	}
+}
+
+// buildMultipart 组装一次上传请求体。
+func buildMultipart(t *testing.T, text string, files map[string][]byte) (*bytes.Buffer, string) {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	mw := multipart.NewWriter(buf)
+	if text != "" {
+		if err := mw.WriteField("text", text); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, body := range files {
+		fw, err := mw.CreateFormFile("files", name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fw.Write(body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf, mw.FormDataContentType()
+}
+
+func (e *env) upload(t *testing.T, text string, files map[string][]byte) *http.Response {
+	t.Helper()
+	buf, ct := buildMultipart(t, text, files)
+	req, err := http.NewRequest(http.MethodPost, e.srv.URL+"/api/items", buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", ct)
+	resp, body := e.do(t, req)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("上传应 201，得到 %d %s", resp.StatusCode, body)
+	}
+	return resp
+}
+
+func decodeItem(t *testing.T, body []byte) store.Item {
+	t.Helper()
+	var it store.Item
+	if err := json.Unmarshal(body, &it); err != nil {
+		t.Fatalf("解析内容失败: %v (%s)", err, body)
+	}
+	return it
+}
+
+func TestItemCreateListAndTaken(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+
+	content := []byte(strings.Repeat("file-body-", 500))
+	e.upload(t, "你好，请看附件", map[string][]byte{"报告 2026.pdf": content})
+	e.upload(t, "只有文字", nil)
+
+	resp, body := e.do(t, e.newJSONReq(t, http.MethodGet, "/api/items", nil))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("列表应 200，得到 %d %s", resp.StatusCode, body)
+	}
+	var list struct {
+		Items      []store.Item `json:"items"`
+		NextCursor string       `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(body, &list); err != nil {
+		t.Fatalf("解析列表失败: %v (%s)", err, body)
+	}
+	if len(list.Items) != 2 {
+		t.Fatalf("应有 2 条，得到 %d", len(list.Items))
+	}
+	newest := list.Items[0]
+	if newest.Text != "只有文字" {
+		t.Fatalf("最新一条应是纯文字，得到 %+v", newest)
+	}
+	withFile := list.Items[1]
+	if withFile.SourceIP == "" || withFile.CreatedBy != "admin" {
+		t.Fatalf("来源信息缺失: %+v", withFile)
+	}
+	if len(withFile.Files) != 1 || withFile.Files[0].Size != int64(len(content)) {
+		t.Fatalf("附件信息不对: %+v", withFile.Files)
+	}
+	want := sha256.Sum256(content)
+	if withFile.Files[0].SHA256 != hex.EncodeToString(want[:]) {
+		t.Fatal("sha256 不匹配")
+	}
+	if withFile.Text != "你好，请看附件" {
+		t.Fatalf("文本未回填: %q", withFile.Text)
+	}
+
+	// 未取走筛选
+	resp, body = e.do(t, e.newJSONReq(t, http.MethodGet, "/api/items?filter=todo", nil))
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "只有文字") {
+		t.Fatalf("未取走筛选异常: %d %s", resp.StatusCode, body)
+	}
+
+	// 标记已取走
+	resp, body = e.do(t, e.newJSONReq(t, http.MethodPatch, "/api/items/"+withFile.ID, map[string]bool{"taken": true}))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("标记取走应 200，得到 %d %s", resp.StatusCode, body)
+	}
+	if marked := decodeItem(t, body); !marked.Taken || marked.TakenBy != "admin" {
+		t.Fatalf("标记未生效: %+v", marked)
+	}
+	resp, body = e.do(t, e.newJSONReq(t, http.MethodGet, "/api/items?filter=todo", nil))
+	if strings.Contains(string(body), withFile.ID) {
+		t.Fatalf("已取走的内容不应出现在 todo 列表: %s", body)
+	}
+
+	// 搜索
+	resp, body = e.do(t, e.newJSONReq(t, http.MethodGet, "/api/items?q=只有", nil))
+	if !strings.Contains(string(body), "只有文字") || strings.Contains(string(body), withFile.ID) {
+		t.Fatalf("搜索应只命中纯文字那条: %s", body)
+	}
+	// 按附件名搜索
+	_, body = e.do(t, e.newJSONReq(t, http.MethodGet, "/api/items?q=报告", nil))
+	if !strings.Contains(string(body), withFile.ID) {
+		t.Fatalf("按附件名搜索应命中: %s", body)
+	}
+
+	// 删除
+	resp, _ = e.do(t, e.newJSONReq(t, http.MethodDelete, "/api/items/"+withFile.ID, nil))
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("删除应 204，得到 %d", resp.StatusCode)
+	}
+	resp, _ = e.do(t, e.newJSONReq(t, http.MethodGet, "/api/items/"+withFile.ID, nil))
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("删除后应 404，得到 %d", resp.StatusCode)
+	}
+	resp, _ = e.do(t, e.newJSONReq(t, http.MethodDelete, "/api/items/"+withFile.ID, nil))
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("重复删除应 404，得到 %d", resp.StatusCode)
+	}
+}
+
+func TestItemRejectsEmptyAndOversize(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+
+	buf, ct := buildMultipart(t, "", nil)
+	req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/api/items", buf)
+	req.Header.Set("Content-Type", ct)
+	resp, body := e.do(t, req)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("空内容应 400，得到 %d %s", resp.StatusCode, body)
+	}
+
+	big := bytes.Repeat([]byte("x"), int(e.cfg.MaxFileBytes())+10)
+	buf, ct = buildMultipart(t, "太大", map[string][]byte{"big.bin": big})
+	req, _ = http.NewRequest(http.MethodPost, e.srv.URL+"/api/items", buf)
+	req.Header.Set("Content-Type", ct)
+	resp, body = e.do(t, req)
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("超大文件应 413，得到 %d %s", resp.StatusCode, body)
+	}
+	resp, body = e.do(t, e.newJSONReq(t, http.MethodGet, "/api/items", nil))
+	if strings.Contains(string(body), "太大") {
+		t.Fatalf("失败的上传不应留下内容: %s", body)
+	}
+}
+
+func TestItemRequiresAuth(t *testing.T) {
+	e := newEnv(t)
+	resp, _ := e.doWith(t, e.clientNoJar, e.newJSONReq(t, http.MethodGet, "/api/items", nil))
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("未登录访问内容应 401，得到 %d", resp.StatusCode)
 	}
 }
