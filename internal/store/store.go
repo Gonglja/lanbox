@@ -25,18 +25,36 @@ var (
 	ErrNoSpace      = errors.New("磁盘空间不足")
 	ErrTooManyFiles = errors.New("附件数量超过上限")
 	ErrTextTooLong  = errors.New("文本超过长度上限")
+	ErrBadPath      = errors.New("附件路径不合法")
+	ErrItemTooLarge = errors.New("内容总大小超过上限")
 )
 
-// MaxFilesPerItem 是单条内容的附件数量上限。
-const MaxFilesPerItem = 20
+const (
+	// DefaultMaxFiles 是单条内容附件数量的默认上限。
+	DefaultMaxFiles = 500
+	// DefaultMaxItemBytes 是单条内容附件总大小的默认上限（2 GiB）。
+	DefaultMaxItemBytes = 2 << 30
+)
 
 // File 是一个附件。
 type File struct {
 	ID        string `json:"id"`
-	Name      string `json:"name"`
+	Path      string `json:"path"` // 相对路径，如 "photos/2024/a.jpg"
+	Name      string `json:"name"` // basename，兼容旧前端与磁盘后缀
 	Size      int64  `json:"size"`
 	SHA256    string `json:"sha256"`
 	Downloads int64  `json:"downloads"`
+}
+
+// RelPath 返回附件在内容内的相对路径；旧数据没有 path 时回退到文件名。
+func (f File) RelPath() string {
+	if f.Path != "" {
+		return f.Path
+	}
+	if f.Name != "" {
+		return f.Name
+	}
+	return f.ID
 }
 
 // Item 是一条内容（文本和/或附件）。
@@ -64,7 +82,9 @@ func (it *Item) match(needleLower string) bool {
 		return true
 	}
 	for _, f := range it.Files {
-		if strings.Contains(strings.ToLower(f.Name), needleLower) {
+		// RelPath 覆盖完整路径，目录名也能被搜到；Name 兜底防 Path 与 Name 不一致。
+		if strings.Contains(strings.ToLower(f.RelPath()), needleLower) ||
+			strings.Contains(strings.ToLower(f.Name), needleLower) {
 			return true
 		}
 	}
@@ -76,6 +96,8 @@ type Options struct {
 	MaxFileBytes int64
 	MinFreeBytes int64
 	MaxTextBytes int
+	MaxFiles     int   // 单条内容的附件数量上限，0 表示 DefaultMaxFiles
+	MaxItemBytes int64 // 单条内容的附件总字节上限，0 表示 DefaultMaxItemBytes
 	FreeSpace    func(path string) (int64, error)
 }
 

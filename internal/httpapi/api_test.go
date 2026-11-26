@@ -1,17 +1,21 @@
 package httpapi_test
 
 import (
+	"archive/zip"
 	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -34,17 +38,25 @@ type env struct {
 	adminPassword string
 }
 
+// testMaxFilesPerItem 刻意取小值，让「超过附件数量」的用例只需几十个 part；
+// 夹具上限是 20，任何单条内容超过 20 个附件的测试都会拿到 400 too_many_files。
+const testMaxFilesPerItem = 20
+
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	cfg := config.Defaults()
 	cfg.DataDir = t.TempDir()
 	cfg.MaxFileSizeMB = 8
+	cfg.MaxItemSizeMB = 16
 	cfg.MinFreeDiskMB = 0
+	cfg.MaxFilesPerItem = testMaxFilesPerItem
 
 	st, err := store.Open(filepath.Join(cfg.DataDir, "items"), store.Options{
 		MaxFileBytes: cfg.MaxFileBytes(),
 		MinFreeBytes: 0,
 		MaxTextBytes: cfg.MaxTextBytes,
+		MaxFiles:     cfg.MaxFilesPerItem,
+		MaxItemBytes: cfg.MaxItemBytes(),
 	})
 	if err != nil {
 		t.Fatalf("打开 store 失败: %v", err)
@@ -642,5 +654,326 @@ func TestChangeOwnPassword(t *testing.T) {
 	resp, _ = e.do(t, e.newJSONReq(t, http.MethodGet, "/api/me", nil))
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("改密后旧会话应失效，得到 %d", resp.StatusCode)
+	}
+}
+
+func TestUploadBadNameMapsTo400(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	part, err := mw.CreateFormFile("files", "***")
+	if err != nil {
+		t.Fatal(err)
+	}
+	part.Write([]byte("x"))
+	mw.Close()
+
+	req, err := http.NewRequest(http.MethodPost, e.srv.URL+"/api/items", &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, body := e.do(t, req)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("非法文件名应 400，得到 %d %s", resp.StatusCode, body)
+	}
+	var eb struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &eb); err != nil {
+		t.Fatal(err)
+	}
+	if eb.Error.Code != "bad_path" {
+		t.Fatalf("错误码应为 bad_path，得到 %q", eb.Error.Code)
+	}
+}
+
+func TestUploadTooManyFilesMessageUsesConfig(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	for i := 0; i <= e.cfg.MaxFilesPerItem; i++ {
+		part, err := mw.CreateFormFile("files", "f.txt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		part.Write([]byte("x"))
+	}
+	mw.Close()
+
+	req, err := http.NewRequest(http.MethodPost, e.srv.URL+"/api/items", &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, body := e.do(t, req)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("超过附件数量应 400，得到 %d %s", resp.StatusCode, body)
+	}
+	if !bytes.Contains(body, []byte(fmt.Sprintf("不能超过 %d 个", e.cfg.MaxFilesPerItem))) {
+		t.Fatalf("文案应带上实际上限 %d: %s", e.cfg.MaxFilesPerItem, body)
+	}
+}
+
+func TestUploadItemTooLargeMapsTo413(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+
+	// 夹具 MaxItemSizeMB=16、MaxFileSizeMB=8。同一条内容里先放 8MiB + 4MiB，
+	// 再用 5MiB 触发：单文件没超 8MiB，但单条只剩 4MiB，必须命中 ErrItemTooLarge 而不是 ErrTooLarge。
+	// 三个 part 必须在同一次请求里，否则每次上传都会新建一条内容，额度不会累积。
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	for _, f := range []struct {
+		name string
+		size int
+	}{{"a.bin", 8 << 20}, {"b.bin", 4 << 20}, {"c.bin", 5 << 20}} {
+		part, err := mw.CreateFormFile("files", f.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := part.Write(bytes.Repeat([]byte("x"), f.size)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mw.Close()
+
+	req, err := http.NewRequest(http.MethodPost, e.srv.URL+"/api/items", &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, body := e.do(t, req)
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("超过单条总大小应 413，得到 %d %s", resp.StatusCode, body)
+	}
+	if !bytes.Contains(body, []byte("item_too_large")) {
+		t.Fatalf("错误码应为 item_too_large: %s", body)
+	}
+	if !bytes.Contains(body, []byte(fmt.Sprintf("%dMB", e.cfg.MaxItemSizeMB))) {
+		t.Fatalf("文案应带上单条上限 %dMB: %s", e.cfg.MaxItemSizeMB, body)
+	}
+}
+
+func TestUploadKeepsRelativePaths(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+
+	it := e.uploadParts(t, []uploadPart{
+		{field: "files:photos/2024/a.jpg", filename: "a.jpg", body: "jpeg-bytes"},
+		{field: "files", filename: "b.txt", body: "hello"},
+	})
+	if len(it.Files) != 2 {
+		t.Fatalf("应有 2 个附件: %+v", it.Files)
+	}
+	if it.Files[0].Path != "photos/2024/a.jpg" || it.Files[0].Name != "a.jpg" {
+		t.Fatalf("路径字段不对: %+v", it.Files[0])
+	}
+	if it.Files[1].Path != "b.txt" {
+		t.Fatalf("旧字段 files 应按文件名回退，得到 %+v", it.Files[1])
+	}
+}
+
+func TestUploadRejectsBadPath(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	part, err := mw.CreateFormFile("files:../../etc/passwd", "passwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	mw.Close()
+
+	req, err := http.NewRequest(http.MethodPost, e.srv.URL+"/api/items", &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, body := e.do(t, req)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("非法路径应 400，得到 %d %s", resp.StatusCode, body)
+	}
+	var eb struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &eb); err != nil {
+		t.Fatal(err)
+	}
+	if eb.Error.Code != "bad_path" {
+		t.Fatalf("错误码应为 bad_path，得到 %q", eb.Error.Code)
+	}
+
+	_, body = e.do(t, e.newJSONReq(t, http.MethodGet, "/api/items", nil))
+	var list struct {
+		Items []store.Item `json:"items"`
+	}
+	if err := json.Unmarshal(body, &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 0 {
+		t.Fatalf("失败的上传不应留下内容: %+v", list.Items)
+	}
+}
+
+// uploadPart 描述一次 multipart 文件 part。
+type uploadPart struct {
+	field    string // 字段名，如 "files:photos/a.jpg"
+	filename string
+	body     string
+}
+
+// uploadParts 用自定义字段名上传并返回解析后的内容。
+func (e *env) uploadParts(t *testing.T, parts []uploadPart) store.Item {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	for _, p := range parts {
+		w, err := mw.CreateFormFile(p.field, p.filename)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte(p.body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, e.srv.URL+"/api/items", &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, body := e.do(t, req)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("上传应 201，得到 %d %s", resp.StatusCode, body)
+	}
+	return decodeItem(t, body)
+}
+
+func TestDownloadZip(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+	it := e.uploadParts(t, []uploadPart{
+		{field: "files:photos/2024/a.jpg", filename: "a.jpg", body: "aaa"},
+		{field: "files", filename: "notes.txt", body: "hello"},
+	})
+
+	resp, body := e.do(t, e.newJSONReq(t, http.MethodGet, "/api/items/"+it.ID+"/zip", nil))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("zip 应 200，得到 %d %s", resp.StatusCode, body)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/zip" {
+		t.Fatalf("Content-Type 应为 application/zip，得到 %q", ct)
+	}
+	if cd := resp.Header.Get("Content-Disposition"); !strings.Contains(cd, "lanbox-"+it.ID+".zip") {
+		t.Fatalf("Content-Disposition 不对: %q", cd)
+	}
+
+	zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+	if err != nil {
+		t.Fatalf("解析 zip 失败: %v", err)
+	}
+	got := map[string]string{}
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		got[f.Name] = string(raw)
+	}
+	if got["photos/2024/a.jpg"] != "aaa" || got["notes.txt"] != "hello" {
+		t.Fatalf("zip 内容不对: %+v", got)
+	}
+}
+
+func TestDownloadZipWithoutFiles(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+	it := e.uploadParts(t, []uploadPart{{field: "text", filename: "", body: "只有文字"}})
+	resp, body := e.do(t, e.newJSONReq(t, http.MethodGet, "/api/items/"+it.ID+"/zip", nil))
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("无附件应 400，得到 %d %s", resp.StatusCode, body)
+	}
+	if !bytes.Contains(body, []byte("no_files")) {
+		t.Fatalf("错误码应为 no_files: %s", body)
+	}
+}
+
+func TestDownloadZipRequiresAuth(t *testing.T) {
+	e := newEnv(t)
+	resp, body := e.doWith(t, e.clientNoJar, e.newJSONReq(t, http.MethodGet, "/api/items/anything/zip", nil))
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("未登录应 401，得到 %d %s", resp.StatusCode, body)
+	}
+}
+
+func TestDownloadZipMissingFileIsNotFound(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+	it := e.uploadParts(t, []uploadPart{{field: "files", filename: "a.txt", body: "aaa"}})
+
+	// 绕过 store 直接删掉磁盘文件，模拟磁盘被外部清理。
+	disk, _, err := e.store.FilePath(it.ID, it.Files[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(disk); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, body := e.do(t, e.newJSONReq(t, http.MethodGet, "/api/items/"+it.ID+"/zip", nil))
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("附件缺失应 404，得到 %d %s", resp.StatusCode, body)
+	}
+	if !bytes.Contains(body, []byte("file_missing")) {
+		t.Fatalf("错误码应为 file_missing: %s", body)
+	}
+}
+
+func TestDownloadZipSetsNoStore(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+	it := e.uploadParts(t, []uploadPart{{field: "files", filename: "a.txt", body: "a"}})
+
+	// 走真实 HTTP 时，net/http 会对小体积响应自动补上 Content-Length，
+	// 断言会误报；这里直接调用 handler，只验证它自己没有显式设置该头。
+	u, err := url.Parse(e.srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/items/"+it.ID+"/zip", nil)
+	for _, ck := range e.client.Jar.Cookies(u) {
+		req.AddCookie(ck)
+	}
+	rec := httptest.NewRecorder()
+	e.srv.Config.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("zip 应 200，得到 %d %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control 应为 no-store，得到 %q", got)
+	}
+	if got := rec.Header().Get("Content-Length"); got != "" {
+		t.Fatalf("handler 不应显式设置 Content-Length，得到 %q", got)
 	}
 }

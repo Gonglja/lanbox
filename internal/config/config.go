@@ -22,7 +22,9 @@ type Config struct {
 	DataDir         string `json:"data_dir"`
 	TLS             TLS    `json:"tls"`
 	MaxFileSizeMB   int64  `json:"max_file_size_mb"`
+	MaxItemSizeMB   int64  `json:"max_item_size_mb"`
 	MinFreeDiskMB   int64  `json:"min_free_disk_mb"`
+	MaxFilesPerItem int    `json:"max_files_per_item"`
 	MaxTextBytes    int    `json:"max_text_bytes"`
 	SessionTTLHours int    `json:"session_ttl_hours"`
 }
@@ -33,7 +35,9 @@ func Defaults() Config {
 		Listen:          ":8443",
 		DataDir:         "./data",
 		MaxFileSizeMB:   1024,
+		MaxItemSizeMB:   2048,
 		MinFreeDiskMB:   1024,
+		MaxFilesPerItem: 500,
 		MaxTextBytes:    65536,
 		SessionTTLHours: 168,
 	}
@@ -80,6 +84,7 @@ func applyEnv(c *Config) error {
 		dst *int64
 	}{
 		{"LANBOX_MAX_FILE_SIZE_MB", &c.MaxFileSizeMB},
+		{"LANBOX_MAX_ITEM_SIZE_MB", &c.MaxItemSizeMB},
 		{"LANBOX_MIN_FREE_DISK_MB", &c.MinFreeDiskMB},
 	}
 	for _, it := range ints {
@@ -92,6 +97,13 @@ func applyEnv(c *Config) error {
 			return fmt.Errorf("环境变量 %s 不是整数: %q", it.env, v)
 		}
 		*it.dst = n
+	}
+	if v, ok := os.LookupEnv("LANBOX_MAX_FILES_PER_ITEM"); ok {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("环境变量 LANBOX_MAX_FILES_PER_ITEM 不是整数: %q", v)
+		}
+		c.MaxFilesPerItem = n
 	}
 	if v, ok := os.LookupEnv("LANBOX_MAX_TEXT_BYTES"); ok {
 		n, err := strconv.Atoi(v)
@@ -121,8 +133,14 @@ func (c Config) Validate() error {
 	if c.MaxFileSizeMB <= 0 {
 		return errors.New("max_file_size_mb 必须大于 0")
 	}
+	if c.MaxItemSizeMB <= 0 {
+		return errors.New("max_item_size_mb 必须大于 0")
+	}
 	if c.MinFreeDiskMB < 0 {
 		return errors.New("min_free_disk_mb 不能为负数")
+	}
+	if c.MaxFilesPerItem < 1 || c.MaxFilesPerItem > 10000 {
+		return errors.New("max_files_per_item 必须在 1..10000 之间")
 	}
 	if c.MaxTextBytes <= 0 {
 		return errors.New("max_text_bytes 必须大于 0")
@@ -138,6 +156,9 @@ func (c Config) Validate() error {
 
 // MaxFileBytes 是单文件大小上限（字节）。
 func (c Config) MaxFileBytes() int64 { return c.MaxFileSizeMB << 20 }
+
+// MaxItemBytes 是单条内容附件总大小上限（字节）。
+func (c Config) MaxItemBytes() int64 { return c.MaxItemSizeMB << 20 }
 
 // MinFreeBytes 是必须保留的空闲磁盘下限（字节）。
 func (c Config) MinFreeBytes() int64 { return c.MinFreeDiskMB << 20 }

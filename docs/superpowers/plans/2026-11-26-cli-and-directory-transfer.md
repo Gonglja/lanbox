@@ -98,6 +98,9 @@ func TestSanitizeRelPath(t *testing.T) {
 		{`..\x`, "", true},
 		{`C:\Windows\x`, "", true},
 		{"///", "", true},
+		{" ..", "", true},
+		{".\x00./x", "", true},
+		{"a/\t../b", "", true},
 		{strings.Repeat("a", maxSegmentRunes+1), "", true},
 		{deep, "", true},
 		{long, "", true},
@@ -163,15 +166,13 @@ func SanitizeRelPath(raw string) (string, error) {
 	}
 	segs := make([]string, 0, 8)
 	for _, seg := range strings.Split(p, "/") {
+		// 先清洗再判定：否则 " .."、".\x00." 这类输入清洗后会重组出 ".."。
+		seg = cleanSegment(seg)
 		switch seg {
 		case "", ".":
 			continue
 		case "..":
 			return "", ErrBadPath
-		}
-		seg = cleanSegment(seg)
-		if seg == "" {
-			continue
 		}
 		if len([]rune(seg)) > maxSegmentRunes {
 			return "", ErrBadPath
@@ -203,9 +204,10 @@ func cleanSegment(seg string) string {
 	return strings.TrimSpace(b.String())
 }
 
-// isWindowsAbs 判断是否是盘符形式的绝对路径（C: / c:/x）。
+// isWindowsAbs 判断是否是盘符形式的绝对路径（C:/x、c:/x）。
+// 盘符后必须紧跟分隔符：否则 "a:b.txt" 这类普通文件名会被误判为绝对路径。
 func isWindowsAbs(p string) bool {
-	if len(p) < 2 || p[1] != ':' {
+	if len(p) < 3 || p[1] != ':' || p[2] != '/' {
 		return false
 	}
 	c := p[0]
@@ -345,6 +347,165 @@ Expected: 全部 PASS
 ```bash
 git add internal/store/store.go internal/store/files.go internal/store/files_test.go
 git commit -m "feat(store): 附件记录相对路径并兼容旧数据"
+```
+
+---
+
+## Task 3a: 附件磁盘名单一真源与按路径搜索
+
+**Files:**
+- Modify: `internal/store/files.go`（新增 `diskName`，`AddFile`/`FilePath`/`DeleteFile` 改用它）
+- Modify: `internal/store/store.go`（`Item.match`）
+- Test: `internal/store/files_test.go`
+
+> 为什么先做这一步：`AddFile`（写）、`FilePath`（读）、`DeleteFile`（删）各自拼 `<fid>__<name>`，其中 `DeleteFile` 没有空 `Name` 兜底，导致「`path` 有值、`name` 为空」的条目读得到、删不掉（孤儿文件静默泄漏）。`AddFile` 在 Task 3 要整段重写，先收敛真源最省事。
+
+- [ ] **Step 1: 写失败测试**
+
+在 `internal/store/files_test.go` 末尾追加：
+
+```go
+func TestDiskName(t *testing.T) {
+	cases := []struct {
+		f    File
+		want string
+	}{
+		{File{ID: "f1", Name: "a.txt", Path: "photos/a.txt"}, "f1__a.txt"},
+		{File{ID: "f2", Path: "photos/a.jpg"}, "f2__a.jpg"},
+		{File{ID: "f3"}, "f3__f3"},
+	}
+	for _, c := range cases {
+		if got := diskName(c.f); got != c.want {
+			t.Fatalf("diskName(%+v)=%q，期望 %q", c.f, got, c.want)
+		}
+	}
+}
+
+func TestRelPathFallsBackToID(t *testing.T) {
+	if got := (File{ID: "f0"}).RelPath(); got != "f0" {
+		t.Fatalf("双空时应回退 ID，得到 %q", got)
+	}
+}
+
+func TestFilePathUsesBasenameWhenNameEmpty(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "items")
+	dir := filepath.Join(root, "0000000000002-def")
+	if err := os.MkdirAll(filepath.Join(dir, "files"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	meta := `{"id":"0000000000002-def","created_at":"2026-01-01T00:00:00Z","created_by":"u","files":[{"id":"f9","path":"photos/2024/a.jpg","size":3}]}`
+	if err := os.WriteFile(filepath.Join(dir, "meta.json"), []byte(meta), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "files", "f9__a.jpg"), []byte("abc"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(root, Options{})
+	if err != nil {
+		t.Fatalf("打开存储失败: %v", err)
+	}
+	disk, f, err := s.FilePath("0000000000002-def", "f9")
+	if err != nil {
+		t.Fatalf("解析附件路径失败: %v", err)
+	}
+	if filepath.Base(disk) != "f9__a.jpg" {
+		t.Fatalf("应回退到 path 的 basename: %s", disk)
+	}
+	if f.RelPath() != "photos/2024/a.jpg" {
+		t.Fatalf("RelPath 应返回 path，得到 %q", f.RelPath())
+	}
+
+	// 删除也要走同一套磁盘名：没有兜底时会删 <fid>__ 而静默留下孤儿文件。
+	if _, err := s.DeleteFile("0000000000002-def", "f9"); err != nil {
+		t.Fatalf("删除附件失败: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "files", "f9__a.jpg")); !os.IsNotExist(err) {
+		t.Fatal("附件文件应已被删除")
+	}
+}
+
+func TestMatchMatchesNestedPath(t *testing.T) {
+	it := &Item{Files: []File{{ID: "f1", Path: "photos/2024/a.jpg", Name: "a.jpg"}}}
+	for _, needle := range []string{"photos", "photos/2024/a.jpg", "2024", "a.jpg"} {
+		if !it.match(strings.ToLower(needle)) {
+			t.Fatalf("%q 应命中路径", needle)
+		}
+	}
+	if it.match("videos") {
+		t.Fatal("不相关的关键词不应命中")
+	}
+
+	legacy := &Item{Files: []File{{ID: "f2", Name: "a.txt"}}}
+	if !legacy.match("a.txt") {
+		t.Fatal("旧数据（无 path）仍应按文件名命中")
+	}
+}
+```
+
+- [ ] **Step 2: 跑测试确认失败**
+
+Run: `go test ./internal/store -run 'TestDiskName|TestRelPathFallsBackToID|TestFilePathUsesBasename|TestMatchMatches' -v`
+Expected: 编译失败，`undefined: diskName`
+
+- [ ] **Step 3: 实现**
+
+`internal/store/files.go` 新增（放在 `AddFile` 之前）：
+
+```go
+// diskName 返回附件在 files/ 下的磁盘文件名：<文件ID>__<basename>。
+// 写（AddFile）、读（FilePath）、删（DeleteFile）共用，避免三处各自拼装后走偏。
+// 极端情况下 Path 与 Name 都为空（外部写入的 meta），退化为 <fid>__<fid>。
+func diskName(f File) string {
+	name := f.Name
+	if name == "" {
+		name = path.Base(f.RelPath())
+	}
+	return f.ID + "__" + name
+}
+```
+
+`FilePath` 收敛为：
+
+```go
+	p := filepath.Join(s.filesDir(itemID), diskName(*found))
+	return p, found, nil
+```
+
+`DeleteFile` 里的磁盘名同样改用 `diskName`：
+
+```go
+	diskPath := filepath.Join(s.filesDir(itemID), diskName(cp.Files[idx]))
+```
+
+`internal/store/store.go` 的 `Item.match` 改为（保留 `Name` 比较，旧数据行为完全等价）：
+
+```go
+func (it *Item) match(needleLower string) bool {
+	if strings.Contains(strings.ToLower(it.Text), needleLower) {
+		return true
+	}
+	for _, f := range it.Files {
+		// RelPath 覆盖完整路径，目录名也能被搜到；Name 兜底防 Path 与 Name 不一致。
+		if strings.Contains(strings.ToLower(f.RelPath()), needleLower) ||
+			strings.Contains(strings.ToLower(f.Name), needleLower) {
+			return true
+		}
+	}
+	return false
+}
+```
+
+- [ ] **Step 4: 跑测试确认通过**
+
+Run: `go test ./internal/store -v && go test ./... -count=1 && go vet ./... && gofmt -l .`
+Expected: 全绿、无输出
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add internal/store/files.go internal/store/store.go internal/store/files_test.go
+git commit -m "refactor(store): 磁盘名收敛为 diskName，搜索支持相对路径"
 ```
 
 ---
@@ -590,7 +751,7 @@ func (s *Store) AddFile(itemID, relPath string, declaredSize int64, r io.Reader)
 	}
 
 	fid := newFileID()
-	diskPath := filepath.Join(s.filesDir(itemID), fid+"__"+base)
+	diskPath := filepath.Join(s.filesDir(itemID), diskName(File{ID: fid, Path: finalPath, Name: base}))
 
 	f, err := os.OpenFile(diskPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o640)
 	if err != nil {
@@ -3934,3 +4095,26 @@ git commit -m "build: 交叉编译 CLI，README 补充客户端与目录传输�
 | §10/§11 不做与兼容 | Task 2、Task 3、Task 13 |
 
 **类型一致性检查：** `AddFile(itemID, relPath string, declaredSize int64, r io.Reader)`（Task 3）在 Task 5 的调用处一致；`client.Upload{Path, Size, Open}`（Task 8）在 Task 11 的 `newUpload` 一致；`client.DownloadOptions{Dest, Force, Resume, OnProgress}`（Task 9）在 Task 11 一致；`collectUploads(paths, recursive)`（Task 11）在测试与 `cmd_put.go` 一致。
+
+## 实现偏差记录
+
+实现过程中对计划/规格的修订，均已同步到代码与测试：
+
+| 偏差 | 原因 | 落地 |
+|---|---|---|
+| `isWindowsAbs` 要求盘符后紧跟 `/` | 原判定把 `a:b.txt` 误判为绝对路径，与测试冲突 | `internal/store/path.go`，规格 §4.2 已同步 |
+| `SanitizeRelPath` 改为「先清洗再判 `..`」 | 原顺序会让 `" .."`、`".\x00./x"` 清洗后重组出 `..` 逃逸 | `internal/store/path.go` + 3 条回归用例 |
+| 增加字节上限前置检查与深度提前失败 | 字段名最长 10MiB，原实现会先切段放大内存（实测 1MiB → 56MiB） | `internal/store/path.go` + 压测用例 |
+| 新增 `diskName(f File)` 单一真源 | 读/写/删三处各自拼 `<fid>__<name>`，`DeleteFile` 缺兜底导致孤儿文件 | Task 3a |
+| `Store.MaxFiles()` / `Store.MaxItemBytes()` 导出 | HTTP 层错误文案要跟随配置，不能硬编码 500 / cfg 镜像 | `internal/store/files.go` |
+| `Options.MaxItemBytes == 0` 回落到 `DefaultMaxItemBytes` | 原语义「0 表示不限」会静默关闭 2GiB 保护 | `internal/store/files.go` |
+| zip 下载先预检所有附件再写响应头 | 否则附件缺失会返回 200 + 截断包 | `internal/httpapi/zip_handlers.go` |
+| `client.DownloadZip` 增加 `force` 参数 | 原实现无条件覆盖，与 `--force` 语义冲突 | `internal/client/get.go` |
+| CLI 新增 `parseArgs`（选项与位置参数交错、支持 `--`） | Go 的 `flag` 遇到位置参数即停止解析，`get <ID> -o dir` 不可用 | `cmd/lanbox-cli/args.go` |
+| CLI 会话文件改用「临时文件 + rename」并收紧已存在目录权限 | 原实现非原子且对已存在 0755 目录不生效 | `cmd/lanbox-cli/session.go` |
+| 移除 `-v` | 只解析未实现，属空功能 | `cmd/lanbox-cli/main.go` |
+| 「超过 500 个文件」提示并入 `refreshPending` | 单独调用会被 `refreshPending` 覆盖，成死代码 | `web/main.js` |
+| 网页端待上传列表显示 `relPath` | 否则同名文件无法区分 | `web/main.js` |
+| 单附件带目录时不再压平为 basename | 与「按相对路径还原目录」的承诺矛盾 | `cmd/lanbox-cli/cmd_get.go` |
+| `--resume` 不再绕过「目标已存在」检查 | 会静默覆盖用户已有文件 | `internal/client/get.go` + 回归用例 |
+| 上传进度把文本字节计入 sent | 带 `-m` 时进度永远停在 99% | `internal/client/put.go` |

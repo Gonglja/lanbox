@@ -141,6 +141,9 @@ button.danger:hover { background: #3a1d21; }
 .item-actions button { font-size: 13px; padding: 6px 12px; }
 .more { display: grid; place-items: center; padding: 5px 0 30px; }
 
+.fdir { opacity: .55; font-size: 12px; }
+.zip-btn { display: inline-block; margin-top: 6px; font-size: 13px; }
+
 .drawer {
   position: fixed; top: 0; right: 0; bottom: 0; width: min(420px, 100%);
   background: #12161b; border-left: 1px solid var(--line);

@@ -35,10 +35,11 @@
 
   <div class="wrap">
     <form id="composer" class="card">
-      <textarea id="composer-text" rows="3" placeholder="请输入文字或文件…（支持拖入文件、Ctrl+V 粘贴截图）"></textarea>
+      <textarea id="composer-text" rows="3" placeholder="请输入文字或文件…（支持拖入文件/文件夹、Ctrl+V 粘贴截图）"></textarea>
       <ul id="pending-files" class="pending"></ul>
       <div class="composer-actions">
         <label class="file-btn">选择文件<input id="composer-files" type="file" multiple hidden></label>
+        <label class="file-btn">选择文件夹<input id="composer-dir" type="file" webkitdirectory directory multiple hidden></label>
         <span id="limit-hint" class="hint"></span>
         <span class="spacer"></span>
         <button type="submit" id="btn-send" class="primary">发送</button>

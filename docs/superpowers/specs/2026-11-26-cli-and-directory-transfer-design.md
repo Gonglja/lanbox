@@ -49,8 +49,9 @@ type File struct {
 }
 ```
 
-- **零迁移**：旧 `meta.json` 没有 `path`。读取侧统一走 `func (f File) relPath() string`：`Path != "" ? Path : Name`。
-- 磁盘布局不变：`items/<id>/files/<fid>__<Name>`。`FilePath()` 仍按 `fid` 在 meta 里查找，再用 `Name` 拼后缀；`Name` 为空时用 `path.Base(relPath())` 兜底。
+- **零迁移**：旧 `meta.json` 没有 `path`。读取侧统一走导出的 `func (f File) RelPath() string`，三级回退 `Path → Name → ID`（双空只会出现在外部写入的 meta；退化为 ID 保证 zip 条目名、`ls`、去重集合都拿不到空字符串）。
+- 磁盘布局不变：`items/<id>/files/<fid>__<basename>`。磁盘名收敛为一个函数 `diskName(f File)`，写（`AddFile`）、读（`FilePath`）、删（`DeleteFile`）共用，避免三处各自拼装后走偏（曾出现「读得到、删不掉」的孤儿文件）。
+- 搜索按 `RelPath()` + `Name` 双比较，所以目录名也能命中；旧数据行为等价。
 - 旧前端的 `f.name`、`link download` 属性、单文件下载接口全部保持可用。
 
 ### 4.2 `SanitizeRelPath(raw string) (string, error)`
@@ -58,17 +59,17 @@ type File struct {
 错误统一为 `ErrBadPath`（`internal/store`）。
 
 1. `\` → `/`。
-2. 若以 `/` 开头或匹配 `^[A-Za-z]:` → 拒绝（绝对路径/盘符）。
-3. 按 `/` 切段，逐段处理：
-   - `""` 与 `"."` → **丢弃**（`a//b`、`a/./b` → `a/b`）；
-   - `".."` → **拒绝**（不做静默改写）；
-   - 删掉 `0x00-0x1f`、`0x7f` 与控制字符集中的 `/\:*?"<>|`；
-   - `TrimSpace`；**保留前导点**（`.env`、`.gitignore` 必须能传），仅丢弃整段为空的结果；
-   - 单段 rune 数 > 120 → 拒绝（**不截断**，避免两条不同路径截断后撞名）。
+2. 若以 `/` 开头、或匹配盘符形式 `^[A-Za-z]:/`（盘符后必须是分隔符，避免把 `a:b.txt` 误判为绝对路径）→ 拒绝。
+3. 按 `/` 切段，**先清洗再判定**（顺序很重要，否则 `" .."` 这类输入清洗后会重组出 `..`）：
+   - 删掉 `0x00-0x1f`、`0x7f` 与控制字符集中的 `/\:*?"<>|`，再 `TrimSpace`；**保留前导点**（`.env`、`.gitignore` 必须能传）；
+   - 清洗后为 `""` 或 `"."` → **丢弃**（`a//b`、`a/./b` → `a/b`）；
+   - 清洗后为 `".."` → **拒绝**（不做静默改写，防止 `..`、`.\x00.`、`" \t.."` 逃逸）；
+   - 清洗后单段 rune 数 > 120 → 拒绝（**不截断**，避免两条不同路径截断后撞名）。
 4. 结果段数 > 16 → 拒绝；连接后字节数 > 1024 → 拒绝。
 5. 全部段被丢弃 → 拒绝。
 
-> 与 `SanitizeName` 的差异仅一处：不剥前导点。理由是路径场景下 dotfile 是正常内容，且 `..` 段已在第 3 步被整体拒绝，不存在穿越风险。
+> 与 `SanitizeName` 的差异仅一处：不剥前导点。理由是路径场景下 dotfile 是正常内容。
+> 「先清洗再判定」是关键：清洗会把 `" .."`、`".\x00."`、`" \t.."` 变成 `".."`，只有在清洗后判定才能堵住穿越。
 
 ### 4.3 `AddFile` 的变化
 
@@ -131,7 +132,7 @@ type File struct {
 ### 6.1 命令面
 
 ```
-lanbox-cli [-s URL] [--json] [-insecure] [-ca FILE] [-v] <command> [args]
+lanbox-cli [-s URL] [--json] [-insecure] [-ca FILE] <command> [args]
 ```
 
 | 命令 | 用法 | 说明 |
@@ -166,10 +167,10 @@ lanbox-cli [-s URL] [--json] [-insecure] [-ca FILE] [-v] <command> [args]
 ### 6.4 下载细节
 
 - 无附件、纯文本内容 → 只打印文本到 stdout（`--json` 除外），不写文件。
-- 单附件：写到 `<DIR>/<basename>`（`DIR` 默认当前目录）。
+- 单附件：路径里没有目录时直接落到 `<DIR>/<basename>`；带目录时按相对路径还原。
 - 多附件/含目录：`<DIR>/<relPath>`，自动 `MkdirAll(0750)`。
-- 已存在：默认**跳过并打印**（`跳过已存在：x`），`--force` 覆盖。目录冲突（要写文件处已是目录或反之）→ 报错并列出。
-- `--resume`：仅单附件；本地已有文件时发 `Range: bytes=<size>-`，206 追加，200 重新开始；结束校验 sha256。
+- 目标已存在：默认**跳过并提示**（提示写 stderr），`--force` 覆盖——`--resume` 不会绕过这条规则。
+- `--resume`：仅单附件；从同目录的 `<dest>.part` 已有字节发 `Range` 续传，结束后校验 sha256 并 rename。
 - 写入使用 `<name>.part` 临时文件，sha256 校验通过后 `rename` 成目标名；校验失败删除临时文件、报错、退出码 1。
 - `--zip FILE`：直接 `GET .../zip` 存为文件，**不自动解压**；与 `--resume` 互斥（用法错误）。
 

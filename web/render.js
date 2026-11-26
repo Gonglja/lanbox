@@ -37,8 +37,21 @@ export function renderItem(item, handlers) {
   node.querySelector('.item-text').textContent = item.text || '';
 
   const fileList = node.querySelector('.files');
-  for (const f of item.files || []) {
+  const files = [...(item.files || [])].sort((a, b) =>
+    (a.path || a.name).localeCompare(b.path || b.name));
+
+  for (const f of files) {
+    const rel = f.path || f.name;
+    const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '';
+
     const li = document.createElement('li');
+    if (dir) {
+      const dirTag = document.createElement('span');
+      dirTag.className = 'fdir';
+      dirTag.textContent = dir + '/';
+      li.append(dirTag);
+    }
+
     const name = document.createElement('span');
     name.className = 'fname';
     name.textContent = f.name;
@@ -60,6 +73,16 @@ export function renderItem(item, handlers) {
 
     li.append(name, meta, link, del);
     fileList.append(li);
+  }
+
+  const needsZip = files.length > 1 || files.some((f) => (f.path || f.name).includes('/'));
+  if (needsZip) {
+    const zip = document.createElement('a');
+    zip.className = 'zip-btn';
+    zip.href = `/api/items/${encodeURIComponent(item.id)}/zip`;
+    zip.setAttribute('download', `lanbox-${item.id}.zip`);
+    zip.textContent = '下载全部 (.zip)';
+    fileList.after(zip);
   }
 
   const takenBtn = node.querySelector('.act-taken');

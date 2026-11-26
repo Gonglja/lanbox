@@ -82,9 +82,9 @@ func TestAddFileDiskGuard(t *testing.T) {
 }
 
 func TestAddFileLimitPerItem(t *testing.T) {
-	s := newStore(t, Options{})
+	s := newStore(t, Options{MaxFiles: 3})
 	it, _ := s.Create(CreateInput{Text: "x", CreatedBy: "u"})
-	for i := 0; i < MaxFilesPerItem; i++ {
+	for i := 0; i < 3; i++ {
 		if _, err := s.AddFile(it.ID, "f.bin", 1, bytes.NewReader([]byte("a"))); err != nil {
 			t.Fatalf("第 %d 个附件失败: %v", i, err)
 		}
@@ -159,5 +159,250 @@ func TestSanitizeName(t *testing.T) {
 	got := SanitizeName(long)
 	if len([]rune(got)) > 124 || !strings.HasSuffix(got, ".txt") {
 		t.Fatalf("超长名字应被截断并保留扩展名: %q", got)
+	}
+}
+
+func TestFileRelPathFallsBackToName(t *testing.T) {
+	f := File{ID: "f1", Name: "a.txt"}
+	if got := f.RelPath(); got != "a.txt" {
+		t.Fatalf("无 path 时应回退文件名，得到 %q", got)
+	}
+	f.Path = "photos/a.txt"
+	if got := f.RelPath(); got != "photos/a.txt" {
+		t.Fatalf("有 path 时应返回路径，得到 %q", got)
+	}
+}
+
+func TestOpenLegacyMetaWithoutPath(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "items")
+	dir := filepath.Join(root, "0000000000001-abc")
+	if err := os.MkdirAll(filepath.Join(dir, "files"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"id":"0000000000001-abc","created_at":"2026-01-01T00:00:00Z","created_by":"u","files":[{"id":"f1","name":"旧 文件.txt","size":3,"sha256":"abc"}]}`
+	if err := os.WriteFile(filepath.Join(dir, "meta.json"), []byte(legacy), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "files", "f1__旧 文件.txt"), []byte("abc"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(root, Options{})
+	if err != nil {
+		t.Fatalf("打开存储失败: %v", err)
+	}
+	it, err := s.Get("0000000000001-abc")
+	if err != nil {
+		t.Fatalf("读取旧内容失败: %v", err)
+	}
+	if it.Files[0].Path != "" || it.Files[0].RelPath() != "旧 文件.txt" {
+		t.Fatalf("旧数据应按 name 回退: %+v", it.Files[0])
+	}
+	disk, _, err := s.FilePath(it.ID, "f1")
+	if err != nil {
+		t.Fatalf("旧数据附件路径解析失败: %v", err)
+	}
+	if _, err := os.Stat(disk); err != nil {
+		t.Fatalf("旧附件应能定位到磁盘: %v", err)
+	}
+}
+
+func TestDiskName(t *testing.T) {
+	cases := []struct {
+		f    File
+		want string
+	}{
+		{File{ID: "f1", Name: "a.txt", Path: "photos/a.txt"}, "f1__a.txt"},
+		{File{ID: "f2", Path: "photos/a.jpg"}, "f2__a.jpg"},
+		{File{ID: "f3"}, "f3__f3"},
+	}
+	for _, c := range cases {
+		if got := diskName(c.f); got != c.want {
+			t.Fatalf("diskName(%+v)=%q，期望 %q", c.f, got, c.want)
+		}
+	}
+}
+
+func TestRelPathFallsBackToID(t *testing.T) {
+	if got := (File{ID: "f0"}).RelPath(); got != "f0" {
+		t.Fatalf("双空时应回退 ID，得到 %q", got)
+	}
+}
+
+func TestFilePathUsesBasenameWhenNameEmpty(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "items")
+	dir := filepath.Join(root, "0000000000002-def")
+	if err := os.MkdirAll(filepath.Join(dir, "files"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	meta := `{"id":"0000000000002-def","created_at":"2026-01-01T00:00:00Z","created_by":"u","files":[{"id":"f9","path":"photos/2024/a.jpg","size":3}]}`
+	if err := os.WriteFile(filepath.Join(dir, "meta.json"), []byte(meta), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "files", "f9__a.jpg"), []byte("abc"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(root, Options{})
+	if err != nil {
+		t.Fatalf("打开存储失败: %v", err)
+	}
+	disk, f, err := s.FilePath("0000000000002-def", "f9")
+	if err != nil {
+		t.Fatalf("解析附件路径失败: %v", err)
+	}
+	if filepath.Base(disk) != "f9__a.jpg" {
+		t.Fatalf("应回退到 path 的 basename: %s", disk)
+	}
+	if f.RelPath() != "photos/2024/a.jpg" {
+		t.Fatalf("RelPath 应返回 path，得到 %q", f.RelPath())
+	}
+
+	// 删除也要走同一套磁盘名：没有兜底时会删 <fid>__ 而静默留下孤儿文件。
+	if _, err := s.DeleteFile("0000000000002-def", "f9"); err != nil {
+		t.Fatalf("删除附件失败: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "files", "f9__a.jpg")); !os.IsNotExist(err) {
+		t.Fatal("附件文件应已被删除")
+	}
+}
+
+func TestMatchMatchesNestedPath(t *testing.T) {
+	it := &Item{Files: []File{{ID: "f1", Path: "photos/2024/a.jpg", Name: "a.jpg"}}}
+	for _, needle := range []string{"photos", "photos/2024/a.jpg", "2024", "a.jpg"} {
+		if !it.match(strings.ToLower(needle)) {
+			t.Fatalf("%q 应命中路径", needle)
+		}
+	}
+	if it.match("videos") {
+		t.Fatal("不相关的关键词不应命中")
+	}
+
+	legacy := &Item{Files: []File{{ID: "f2", Name: "a.txt"}}}
+	if !legacy.match("a.txt") {
+		t.Fatal("旧数据（无 path）仍应按文件名命中")
+	}
+}
+
+func TestAddFileKeepsRelativePath(t *testing.T) {
+	s := newStore(t, Options{})
+	it, _ := s.Create(CreateInput{Text: "x", CreatedBy: "u"})
+	got, err := s.AddFile(it.ID, `photos\2024/a.jpg`, 3, bytes.NewReader([]byte("abc")))
+	if err != nil {
+		t.Fatalf("写附件失败: %v", err)
+	}
+	f := got.Files[0]
+	if f.Path != "photos/2024/a.jpg" || f.Name != "a.jpg" {
+		t.Fatalf("路径/名字不对: %+v", f)
+	}
+	disk, _, err := s.FilePath(it.ID, f.ID)
+	if err != nil {
+		t.Fatalf("定位附件失败: %v", err)
+	}
+	if filepath.Base(disk) != f.ID+"__a.jpg" {
+		t.Fatalf("磁盘名应保持扁平: %s", disk)
+	}
+}
+
+func TestAddFileDedupesSamePath(t *testing.T) {
+	s := newStore(t, Options{})
+	it, _ := s.Create(CreateInput{Text: "x", CreatedBy: "u"})
+	if _, err := s.AddFile(it.ID, "A.txt", 1, bytes.NewReader([]byte("1"))); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.AddFile(it.ID, "a.txt", 1, bytes.NewReader([]byte("2")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Files[1].Path != "a~2.txt" {
+		t.Fatalf("大小写不同的同名应去重为 a~2.txt，得到 %q", got.Files[1].Path)
+	}
+	got, err = s.AddFile(it.ID, "a.txt", 1, bytes.NewReader([]byte("3")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Files[2].Path != "a~3.txt" {
+		t.Fatalf("第三次应为 a~3.txt，得到 %q", got.Files[2].Path)
+	}
+}
+
+func TestAddFileRejectsBadPath(t *testing.T) {
+	s := newStore(t, Options{})
+	it, _ := s.Create(CreateInput{Text: "x", CreatedBy: "u"})
+	if _, err := s.AddFile(it.ID, "../escape.txt", 1, bytes.NewReader([]byte("x"))); !errors.Is(err, ErrBadPath) {
+		t.Fatalf("应报 ErrBadPath，得到 %v", err)
+	}
+	after, _ := s.Get(it.ID)
+	if len(after.Files) != 0 {
+		t.Fatalf("失败不应留下附件记录: %+v", after.Files)
+	}
+}
+
+func TestAddFileRejectsItemOversize(t *testing.T) {
+	s := newStore(t, Options{MaxItemBytes: 5})
+	it, _ := s.Create(CreateInput{Text: "x", CreatedBy: "u"})
+	if _, err := s.AddFile(it.ID, "a.bin", 5, bytes.NewReader([]byte("12345"))); err != nil {
+		t.Fatalf("刚好到上限应成功: %v", err)
+	}
+	if _, err := s.AddFile(it.ID, "b.bin", 1, bytes.NewReader([]byte("6"))); !errors.Is(err, ErrItemTooLarge) {
+		t.Fatalf("超过单条上限应报 ErrItemTooLarge，得到 %v", err)
+	}
+	after, _ := s.Get(it.ID)
+	if len(after.Files) != 1 || after.Files[0].Path != "a.bin" {
+		t.Fatalf("失败后不应追加附件: %+v", after.Files)
+	}
+}
+
+func TestAddFileMaxFilesOption(t *testing.T) {
+	s := newStore(t, Options{MaxFiles: 2})
+	it, _ := s.Create(CreateInput{Text: "x", CreatedBy: "u"})
+	for i := 0; i < 2; i++ {
+		if _, err := s.AddFile(it.ID, "f.bin", 1, bytes.NewReader([]byte("a"))); err != nil {
+			t.Fatalf("第 %d 个附件失败: %v", i, err)
+		}
+	}
+	if _, err := s.AddFile(it.ID, "f.bin", 1, bytes.NewReader([]byte("a"))); !errors.Is(err, ErrTooManyFiles) {
+		t.Fatalf("超过 MaxFiles 应报 ErrTooManyFiles，得到 %v", err)
+	}
+}
+
+func TestLimitsExposeEffectiveDefaults(t *testing.T) {
+	// 上限未配置时必须回落到默认值，httpapi 的提示文案才能与真实限额一致。
+	s := newStore(t, Options{})
+	if got := s.MaxFiles(); got != DefaultMaxFiles {
+		t.Fatalf("MaxFiles 应回落到 %d，得到 %d", DefaultMaxFiles, got)
+	}
+	if got := s.MaxItemBytes(); got != DefaultMaxItemBytes {
+		t.Fatalf("MaxItemBytes 应回落到 %d，得到 %d", DefaultMaxItemBytes, got)
+	}
+
+	custom := newStore(t, Options{MaxFiles: 2, MaxItemBytes: 5})
+	if custom.MaxFiles() != 2 || custom.MaxItemBytes() != 5 {
+		t.Fatalf("显式配置应生效: MaxFiles=%d MaxItemBytes=%d", custom.MaxFiles(), custom.MaxItemBytes())
+	}
+}
+
+func TestAddFileDedupeExhaustionIsDomainError(t *testing.T) {
+	// MaxFiles=3：a.txt、a~2.txt、a~3.txt 三次后第四次必须仍是领域错误，而不是 500 的普通 error。
+	s := newStore(t, Options{MaxFiles: 3})
+	it, _ := s.Create(CreateInput{Text: "x", CreatedBy: "u"})
+	for i := 0; i < 3; i++ {
+		if _, err := s.AddFile(it.ID, "a.txt", 1, bytes.NewReader([]byte("a"))); err != nil {
+			t.Fatalf("第 %d 个附件失败: %v", i, err)
+		}
+	}
+	if _, err := s.AddFile(it.ID, "a.txt", 1, bytes.NewReader([]byte("a"))); !errors.Is(err, ErrTooManyFiles) {
+		t.Fatalf("撞名耗尽应返回 ErrTooManyFiles，得到 %v", err)
+	}
+}
+
+func TestUniqueRelPathRespectsLimit(t *testing.T) {
+	// 候选名被占满时必须返回空串（由调用方转成领域错误），而不是继续无限找。
+	taken := map[string]bool{"a.txt": true, "a~2.txt": true, "a~3.txt": true}
+	if got := uniqueRelPath(taken, "a.txt", 3); got != "" {
+		t.Fatalf("上限为 3 时候选名已耗尽，应返回空串，得到 %q", got)
+	}
+	if got := uniqueRelPath(taken, "a.txt", 4); got != "a~4.txt" {
+		t.Fatalf("上限放宽到 4 时应得到 a~4.txt，得到 %q", got)
 	}
 }

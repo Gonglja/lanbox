@@ -84,3 +84,46 @@ func TestInvalidValuesRejected(t *testing.T) {
 		}
 	}
 }
+
+func TestDirectoryLimitsDefaults(t *testing.T) {
+	c := Defaults()
+	if c.MaxFilesPerItem != 500 {
+		t.Fatalf("默认 max_files_per_item 应为 500，得到 %d", c.MaxFilesPerItem)
+	}
+	if c.MaxItemSizeMB != 2048 {
+		t.Fatalf("默认 max_item_size_mb 应为 2048，得到 %d", c.MaxItemSizeMB)
+	}
+	if c.MaxItemBytes() != 2048<<20 {
+		t.Fatalf("MaxItemBytes 换算错误: %d", c.MaxItemBytes())
+	}
+}
+
+func TestDirectoryLimitsValidation(t *testing.T) {
+	c := Defaults()
+	c.MaxFilesPerItem = 0
+	if err := c.Validate(); err == nil {
+		t.Fatal("max_files_per_item 为 0 应报错")
+	}
+	c = Defaults()
+	c.MaxFilesPerItem = 10001
+	if err := c.Validate(); err == nil {
+		t.Fatal("max_files_per_item 超过 10000 应报错")
+	}
+	c = Defaults()
+	c.MaxItemSizeMB = 0
+	if err := c.Validate(); err == nil {
+		t.Fatal("max_item_size_mb 为 0 应报错")
+	}
+}
+
+func TestDirectoryLimitsEnvOverride(t *testing.T) {
+	t.Setenv("LANBOX_MAX_FILES_PER_ITEM", "42")
+	t.Setenv("LANBOX_MAX_ITEM_SIZE_MB", "64")
+	c, err := Load(filepath.Join(t.TempDir(), "missing.json"))
+	if err != nil {
+		t.Fatalf("加载配置失败: %v", err)
+	}
+	if c.MaxFilesPerItem != 42 || c.MaxItemSizeMB != 64 {
+		t.Fatalf("环境变量未生效: %+v", c)
+	}
+}

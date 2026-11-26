@@ -53,7 +53,12 @@ func (s *Server) writeStoreErr(w http.ResponseWriter, err error) {
 			fmt.Sprintf("磁盘空间不足，需保留至少 %dMB 空闲", s.cfg.MinFreeDiskMB))
 	case errors.Is(err, store.ErrTooManyFiles):
 		writeError(w, http.StatusBadRequest, "too_many_files",
-			fmt.Sprintf("附件数量不能超过 %d 个", store.MaxFilesPerItem))
+			fmt.Sprintf("附件数量不能超过 %d 个", s.store.MaxFiles()))
+	case errors.Is(err, store.ErrBadPath):
+		writeError(w, http.StatusBadRequest, "bad_path", "附件路径不合法")
+	case errors.Is(err, store.ErrItemTooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge, "item_too_large",
+			fmt.Sprintf("单条内容超过 %dMB 上限", s.store.MaxItemBytes()>>20))
 	case errors.Is(err, store.ErrTextTooLong):
 		writeError(w, http.StatusBadRequest, "text_too_long",
 			fmt.Sprintf("文本超过 %d 字节上限", s.cfg.MaxTextBytes))
@@ -80,6 +85,19 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 		return false
 	}
 	return true
+}
+
+// uploadPath 从 multipart 字段名解析附件相对路径。
+// 新前端/CLI 用 "files:<相对路径>"；旧前端用 "files" + filename。
+// 返回 isFile=false 表示这不是文件字段。
+func uploadPath(field, filename string) (path string, isFile bool) {
+	if rel, ok := strings.CutPrefix(field, "files:"); ok {
+		return rel, true // rel 为空也交给 store 判错
+	}
+	if filename != "" {
+		return filename, true
+	}
+	return "", false
 }
 
 // attachmentHeader 构造同时兼容老浏览器与 UTF-8 文件名的 Content-Disposition。

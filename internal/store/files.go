@@ -9,29 +9,111 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
+// diskName 返回附件在 files/ 下的磁盘文件名：<文件ID>__<basename>。
+// 写（AddFile）、读（FilePath）、删（DeleteFile）共用，避免三处各自拼装后走偏。
+// 极端情况下 Path 与 Name 都为空（外部写入的 meta），退化为 <fid>__<fid>。
+func diskName(f File) string {
+	name := f.Name
+	if name == "" {
+		name = path.Base(f.RelPath())
+	}
+	return f.ID + "__" + name
+}
+
+// MaxFiles 返回生效的单条内容附件数量上限，供 httpapi 生成提示文案。
+func (s *Store) MaxFiles() int { return s.maxFiles() }
+
+// maxFiles 返回生效的附件数量上限。
+func (s *Store) maxFiles() int {
+	if s.opts.MaxFiles > 0 {
+		return s.opts.MaxFiles
+	}
+	return DefaultMaxFiles
+}
+
+// MaxItemBytes 返回生效的单条内容附件总大小上限，供 httpapi 生成提示文案。
+func (s *Store) MaxItemBytes() int64 { return s.maxItemBytes() }
+
+// maxItemBytes 返回生效的单条总大小上限；0 表示未配置时回落到默认值。
+func (s *Store) maxItemBytes() int64 {
+	if s.opts.MaxItemBytes > 0 {
+		return s.opts.MaxItemBytes
+	}
+	return DefaultMaxItemBytes
+}
+
+// newFileID 生成附件 ID。
+func newFileID() string {
+	var b [4]byte
+	for i := range b {
+		b[i] = byte(rand.UintN(256))
+	}
+	return "f" + hex.EncodeToString(b[:])
+}
+
+// uniqueRelPath 在已占用路径集合里为 p 找一个不冲突的路径，候选用完时返回空串。
+// limit 是候选编号的上界，由调用方按附件数量上限传入，避免退化成无界循环。
+// 比较大小写不敏感：Windows/macOS 解压时 A.txt 与 a.txt 会互相覆盖。
+func uniqueRelPath(taken map[string]bool, p string, limit int) string {
+	if !taken[strings.ToLower(p)] {
+		return p
+	}
+	dir, base := path.Split(p)
+	ext := path.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	for i := 2; i <= limit; i++ {
+		cand := dir + stem + "~" + strconv.Itoa(i) + ext
+		if !taken[strings.ToLower(cand)] {
+			return cand
+		}
+	}
+	return ""
+}
+
 // AddFile 将 r 流式写入该内容的 files 目录，同时计算 sha256。
-// 内存占用恒定，与文件大小无关。
-// 调用约定：同一 item 的 AddFile 必须串行调用（httpapi 单次上传内顺序处理），
-// 且不存在向已有内容追加附件的 API，因此不会出现并发合并冲突。
-func (s *Store) AddFile(itemID, name string, declaredSize int64, r io.Reader) (*Item, error) {
-	clean := SanitizeName(name)
+// relPath 是内容内的相对路径，写入前经 SanitizeRelPath 清洗；
+// 磁盘布局仍是 files/<fid>__<basename>，与旧数据保持一致。
+// 调用约定：同一 item 的 AddFile 必须串行调用。
+func (s *Store) AddFile(itemID, relPath string, declaredSize int64, r io.Reader) (*Item, error) {
+	cleanPath, err := SanitizeRelPath(relPath)
+	if err != nil {
+		return nil, err
+	}
 
 	s.mu.RLock()
 	cur, ok := s.index[itemID]
 	var count int
+	var used int64
+	taken := map[string]bool{}
 	if ok {
 		count = len(cur.Files)
+		for _, f := range cur.Files {
+			used += f.Size
+			taken[strings.ToLower(f.RelPath())] = true
+		}
 	}
 	s.mu.RUnlock()
 	if !ok {
 		return nil, ErrNotFound
 	}
-	if count >= MaxFilesPerItem {
+	if count >= s.maxFiles() {
 		return nil, ErrTooManyFiles
 	}
+
+	remaining := s.maxItemBytes() - used
+	if remaining <= 0 {
+		return nil, ErrItemTooLarge
+	}
+
+	finalPath := uniqueRelPath(taken, cleanPath, s.maxFiles()+1)
+	if finalPath == "" {
+		return nil, ErrTooManyFiles
+	}
+	base := path.Base(finalPath)
 
 	if s.opts.FreeSpace != nil {
 		free, err := s.opts.FreeSpace(s.itemsRoot)
@@ -47,23 +129,25 @@ func (s *Store) AddFile(itemID, name string, declaredSize int64, r io.Reader) (*
 		}
 	}
 
-	var rb [4]byte
-	for i := range rb {
-		rb[i] = byte(rand.UintN(256))
-	}
-	fid := "f" + hex.EncodeToString(rb[:])
-	diskPath := filepath.Join(s.filesDir(itemID), fid+"__"+clean)
+	fid := newFileID()
+	diskPath := filepath.Join(s.filesDir(itemID), diskName(File{ID: fid, Path: finalPath, Name: base}))
 
 	f, err := os.OpenFile(diskPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o640)
 	if err != nil {
 		return nil, fmt.Errorf("创建附件文件失败: %w", err)
 	}
 	hasher := sha256.New()
-	max := s.opts.MaxFileBytes
-	var src io.Reader = r
-	if max > 0 {
-		src = io.LimitReader(r, max+1)
+
+	// 读取上限取单文件上限与单条剩余额度的较小值，超限时立即中止。
+	limit := s.opts.MaxFileBytes
+	if limit <= 0 || remaining < limit {
+		limit = remaining
 	}
+	var src io.Reader = r
+	if limit > 0 {
+		src = io.LimitReader(r, limit+1)
+	}
+
 	n, copyErr := io.Copy(io.MultiWriter(f, hasher), src)
 	closeErr := f.Close()
 	if copyErr != nil {
@@ -74,12 +158,22 @@ func (s *Store) AddFile(itemID, name string, declaredSize int64, r io.Reader) (*
 		os.Remove(diskPath)
 		return nil, fmt.Errorf("保存附件失败: %w", closeErr)
 	}
-	if max > 0 && n > max {
+	if s.opts.MaxFileBytes > 0 && n > s.opts.MaxFileBytes {
 		os.Remove(diskPath)
 		return nil, ErrTooLarge
 	}
+	if n > remaining {
+		os.Remove(diskPath)
+		return nil, ErrItemTooLarge
+	}
 
-	file := File{ID: fid, Name: clean, Size: n, SHA256: hex.EncodeToString(hasher.Sum(nil))}
+	file := File{
+		ID:     fid,
+		Path:   finalPath,
+		Name:   base,
+		Size:   n,
+		SHA256: hex.EncodeToString(hasher.Sum(nil)),
+	}
 
 	s.mu.Lock()
 	it, ok := s.index[itemID]
@@ -124,7 +218,8 @@ func (s *Store) FilePath(itemID, fileID string) (string, *File, error) {
 	if found == nil {
 		return "", nil, ErrFileNotFound
 	}
-	p := filepath.Join(s.filesDir(itemID), found.ID+"__"+found.Name)
+	// 磁盘名一直是 <文件ID>__<basename>；旧数据没有 path，name 也非空，能直接命中。
+	p := filepath.Join(s.filesDir(itemID), diskName(*found))
 	return p, found, nil
 }
 
@@ -174,7 +269,7 @@ func (s *Store) DeleteFile(itemID, fileID string) (*Item, error) {
 	if idx < 0 {
 		return nil, ErrFileNotFound
 	}
-	diskPath := filepath.Join(s.filesDir(itemID), cp.Files[idx].ID+"__"+cp.Files[idx].Name)
+	diskPath := filepath.Join(s.filesDir(itemID), diskName(cp.Files[idx]))
 	cp.Files = append(cp.Files[:idx], cp.Files[idx+1:]...)
 	if err := s.saveMeta(cp); err != nil {
 		return nil, err

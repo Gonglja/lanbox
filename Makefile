@@ -3,6 +3,7 @@
 #   make            等价于 make dist（四个平台的静态二进制 + 校验和）
 #   make build      只编本机架构
 #   make dist       交叉编译 linux/amd64、linux/arm64、linux/armv7、linux/386
+#                   同时产出 CLI（lanbox-cli），与服务端同一批平台
 #   make test       跑全部测试
 #   make check      gofmt + go vet + test（提交前自检）
 #   make clean      清掉 dist/ 与本机二进制
@@ -11,6 +12,8 @@
 
 APP      := lanbox
 CMD      := ./cmd/lanbox
+CLI      := lanbox-cli
+CLI_CMD  := ./cmd/lanbox-cli
 DIST     := dist
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 GOFLAGS  := -trimpath
@@ -28,10 +31,11 @@ PREFIX ?= /usr/local
 
 all: dist
 
-## build: 编译本机架构到 ./lanbox
+## build: 编译本机架构到 ./lanbox 与 ./lanbox-cli
 build:
 	CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(APP) $(CMD)
-	@echo "已生成 ./$(APP)（$(HOST_OS)/$(HOST_ARCH)，版本 $(VERSION)）"
+	CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(CLI) $(CLI_CMD)
+	@echo "已生成 ./$(APP) 与 ./$(CLI)（$(HOST_OS)/$(HOST_ARCH)，版本 $(VERSION)）"
 
 ## dist: 交叉编译全部目标到 dist/
 dist:
@@ -49,6 +53,8 @@ dist:
 		echo "==> $$name  ($$os/$$arch GOARM=$${goarm:-n/a})"; \
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch GOARM=$$goarm \
 			go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST)/$$name $(CMD); \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch GOARM=$$goarm \
+			go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST)/$(CLI)-$$os-$$arch$$suffix $(CLI_CMD); \
 	done
 	@$(MAKE) --no-print-directory checksums
 
@@ -83,11 +89,12 @@ run:
 install: build
 	install -d $(DESTDIR)$(PREFIX)/bin
 	install -m 0755 $(APP) $(DESTDIR)$(PREFIX)/bin/$(APP)
-	@echo "已安装到 $(DESTDIR)$(PREFIX)/bin/$(APP)"
+	install -m 0755 $(CLI) $(DESTDIR)$(PREFIX)/bin/$(CLI)
+	@echo "已安装 $(APP) 与 $(CLI) 到 $(DESTDIR)$(PREFIX)/bin"
 
 ## clean: 清理构建产物
 clean:
-	rm -rf $(DIST) $(APP)
+	rm -rf $(DIST) $(APP) $(CLI)
 
 ## help: 列出可用目标
 help:

@@ -83,8 +83,9 @@ func (s *Server) handleCreateItem(w http.ResponseWriter, r *http.Request) {
 			text = string(raw)
 			continue
 		}
-		name := part.FileName()
-		if name == "" {
+		// 路径只能放在字段名里：multipart.Part.FileName() 会按 RFC 7578 丢掉目录。
+		relPath, isFile := uploadPath(part.FormName(), part.FileName())
+		if !isFile {
 			part.Close()
 			continue // 非文件字段，忽略
 		}
@@ -97,7 +98,7 @@ func (s *Server) handleCreateItem(w http.ResponseWriter, r *http.Request) {
 			}
 			item = created
 		}
-		updated, err := s.store.AddFile(item.ID, name, -1, part)
+		updated, err := s.store.AddFile(item.ID, relPath, -1, part)
 		part.Close()
 		if err != nil {
 			cleanup()
