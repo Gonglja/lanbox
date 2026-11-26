@@ -65,7 +65,8 @@ make dist     # 产出 dist/ 下四个静态二进制 + SHA256SUMS
   "max_file_size_mb": 1024,
   "min_free_disk_mb": 1024,
   "max_text_bytes": 65536,
-  "session_ttl_hours": 168
+  "session_ttl_hours": 168,
+  "mdns": { "enabled": true, "hostname": "lanbox", "instance": "" }
 }
 ```
 
@@ -78,8 +79,51 @@ make dist     # 产出 dist/ 下四个静态二进制 + SHA256SUMS
 | `min_free_disk_mb` | 1024 | 剩余磁盘保护线，低于此值拒绝上传（507） |
 | `max_text_bytes` | 65536 | 单条文字上限 |
 | `session_ttl_hours` | 168 | 会话有效期（滑动续期） |
+| `mdns.enabled` | `true` | 是否在局域网内以 mDNS 通告 |
+| `mdns.hostname` | `lanbox` | 通告为 `https://<hostname>.local:<端口>` |
+| `mdns.instance` | 空（同 hostname） | 服务实例名（`_lanbox._tcp` 的 PTR 名称） |
 
-也可用环境变量覆盖：`LANBOX_LISTEN`、`LANBOX_DATA_DIR`、`LANBOX_TLS_CERT_FILE`、`LANBOX_TLS_KEY_FILE`、`LANBOX_MAX_FILE_SIZE_MB`、`LANBOX_MIN_FREE_DISK_MB`、`LANBOX_MAX_TEXT_BYTES`、`LANBOX_SESSION_TTL_HOURS`。
+也可用环境变量覆盖：`LANBOX_LISTEN`、`LANBOX_DATA_DIR`、`LANBOX_TLS_CERT_FILE`、`LANBOX_TLS_KEY_FILE`、`LANBOX_MAX_FILE_SIZE_MB`、`LANBOX_MAX_ITEM_SIZE_MB`、`LANBOX_MIN_FREE_DISK_MB`、`LANBOX_MAX_FILES_PER_ITEM`、`LANBOX_MAX_TEXT_BYTES`、`LANBOX_SESSION_TTL_HOURS`、`LANBOX_MDNS_ENABLED`、`LANBOX_MDNS_HOSTNAME`、`LANBOX_MDNS_INSTANCE`。
+
+### 网页配置与覆盖文件
+
+管理员可在网页「管理 → 设置」里改**全部**配置项。保存后的值写入 `<data_dir>/webconfig.json`（稀疏覆盖，权限 `0600`），
+优先级为：`默认值 → config.json → 环境变量 → webconfig.json`。
+
+- 删除 `webconfig.json` 即回到 `config.json` + 环境变量
+- 网页上每项都标注来源（默认 / 配置文件 / 环境变量 / 网页设置）
+- `max_*`、`session_ttl_hours`、`mdns.*` 立即生效
+- `listen`、`data_dir`、`tls.*` 需重启；网页会提示并提供「立即重启」（`syscall.Exec`，PID 不变，所有人需重新登录）
+- 覆盖文件固定在"文件/环境变量解析出的 `data_dir`"下：改过 `data_dir` 后，旧目录里的 `webconfig.json` 仍是真源
+- **救援**：把 `listen` 改成不可用的值（或端口被占用）时，服务启动会检测到并自动忽略该覆盖、回退到文件配置，日志有 `warn: 网页设置的 listen=... 绑定失败`；也可直接编辑/删除 `<data_dir>/webconfig.json`
+- 运行时健康检查：`GET /api/healthz`（无需登录，返回 `ok/name/version/uptime_s`）
+
+## 局域网发现（mDNS）
+
+服务启动后会在局域网内通告（无需任何额外依赖，端口 UDP 5353）：
+
+- 服务类型：`_lanbox._tcp`（实例名 = `mdns.instance`，留空时用主机名；端口 = 监听端口）
+- 主机名：`<mdns.hostname>.local`
+- TXT：`v=1`、`name=<实例名>`、`tls=1`、`auth=1`、`fp=<叶证书 SHA-256>`
+
+因此可以直接访问 `https://lanbox.local:8443`（自签证书仍需首次信任）。手机、macOS、Linux 均可解析 `.local`。
+
+CLI：
+
+```bash
+lanbox-cli discover                  # 列出局域网实例（实例/地址/版本/主机名/证书指纹）
+lanbox-cli discover -json            # 机器可读
+LANBOX_PASSWORD=... lanbox-cli login # 不给 -s 时自动发现（唯一实例）
+```
+
+自动发现时会按 TXT 里的证书指纹**固定 TLS**（比 `-insecure` 安全），指纹随会话文件保存，后续命令无需再发现；
+`-ca` 与 `-insecure` 优先级更高。多个实例时会列出候选并要求用 `-s` 指定。
+
+排查：
+
+- `avahi-browse -rt _lanbox._tcp`（Linux）或 `dns-sd -B _lanbox._tcp`（macOS）应能看到实例
+- 看不到：确认两台机器在同一网段、未禁用组播、防火墙未拦 UDP 5353
+- 与 avahi/systemd-resolved 共存：使用 `SO_REUSEADDR` + `SO_REUSEPORT`，冲突时回落 `SO_REUSEADDR`；绑定失败只降级为"不通告"，不影响主服务，设置页会显示原因
 
 ## 账号
 
@@ -162,6 +206,13 @@ go build ./...     # 编译检查
 9. 两个窗口同时在线 → 一边发布，另一边 1 秒内出现；删除同样实时消失
 10. 管理员可新增用户、重置密码、删除用户；非管理员看不到"用户管理"，且 `GET /api/users` 返回 403
 11. 修改自己的密码 → 当前会话立即失效，需重新登录
+12. `avahi-browse -rt _lanbox._tcp` 能看到实例与 TXT；`https://<hostname>.local:<端口>` 可打开登录页
+13. 网页「设置」改 `mdns.hostname` 保存 → 无需重启，旧名发 goodbye、新名出现；关闭 `mdns.enabled` 后记录消失
+14. 网页「设置」改 `max_text_bytes` → 立即生效（发一条超过旧上限的文字应成功/失败相应变化）
+15. 网页「设置」改 `listen` → 提示需重启 →「立即重启」→ 在新端口可访问、页面自动回到登录页
+16. 把 `listen` 改成被占用端口 → 重启后自动回退到文件配置，日志有 `warn`，原端口仍可访问
+17. `lanbox-cli discover` 列表正确；`lanbox-cli login`（不给 `-s`）自动发现并按指纹固定证书，随后 `ls` 正常
+18. 删除 `data/webconfig.json` 后重启 → 回到 `config.json` / 环境变量配置
 
 ## 不做的事（有意为之）
 
