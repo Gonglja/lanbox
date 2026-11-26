@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 )
 
 // handleDownloadZip 把一条内容的全部附件流式打包成 zip。
@@ -29,7 +28,6 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 	type entry struct {
 		name string
 		disk string
-		mod  time.Time
 	}
 	entries := make([]entry, 0, len(it.Files))
 	for _, f := range it.Files {
@@ -38,8 +36,7 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 			s.writeStoreErr(w, err)
 			return
 		}
-		st, err := os.Stat(disk)
-		if err != nil {
+		if _, err := os.Stat(disk); err != nil {
 			s.log.Printf("warn: 打包前检查附件 %s 失败: %v", disk, err)
 			writeError(w, http.StatusNotFound, "file_missing", "文件已不存在")
 			return
@@ -51,7 +48,7 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 		if name == "" {
 			name = meta.ID
 		}
-		entries = append(entries, entry{name: name, disk: disk, mod: st.ModTime()})
+		entries = append(entries, entry{name: name, disk: disk})
 	}
 
 	h := w.Header()

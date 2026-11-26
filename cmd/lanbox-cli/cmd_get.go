@@ -42,6 +42,15 @@ type getJSON struct {
 	Text       string           `json:"text,omitempty"`
 }
 
+// destinationPath 计算落盘路径：单附件且路径不含目录时压平，否则保留相对路径。
+// 越界由 safeJoin 兜底，规则本身只看是否单附件与是否带目录。
+func destinationPath(outDir, rel string, single bool) (string, error) {
+	if single && !strings.Contains(rel, "/") {
+		rel = filepath.Base(rel)
+	}
+	return safeJoin(outDir, rel)
+}
+
 // safeJoin 把内容内的相对路径安全地拼到 base 下，越界返回错误。
 func safeJoin(base, rel string) (string, error) {
 	clean := filepath.Clean(filepath.FromSlash(rel))
@@ -143,10 +152,7 @@ func cmdGet(ctx context.Context, g *globals, args []string) error {
 	sum := &downloadSummary{}
 	for _, f := range it.Files {
 		rel := f.RelPath()
-		if single {
-			rel = filepath.Base(rel)
-		}
-		dest, err := safeJoin(*out, rel)
+		dest, err := destinationPath(*out, rel, single)
 		if err != nil {
 			fmt.Fprintf(g.stderr, "跳过不安全的路径 %s：%v\n", rel, err)
 			sum.Failed = append(sum.Failed, rel)

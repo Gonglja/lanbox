@@ -241,7 +241,7 @@ func TestPutListTakenAndDelete(t *testing.T) {
 	if it.Files[0].Path != "photos/2024/a.jpg" || it.Files[1].Path != "notes.txt" {
 		t.Fatalf("路径应保留: %+v", it.Files)
 	}
-	if sent != 8 || total <= 0 {
+	if sent != total || total != 8+int64(len("内网素材")) {
 		t.Fatalf("进度回调不对: sent=%d total=%d", sent, total)
 	}
 
@@ -443,5 +443,55 @@ func TestDownloadZipRespectsForce(t *testing.T) {
 	}
 	if _, err := os.Stat(dest + ".part"); !os.IsNotExist(err) {
 		t.Fatal("成功 rename 后不应残留 .part")
+	}
+}
+
+// TestDownloadFileResumeRefusesExistingDest 断言 --resume 不会绕过「目标已存在」保护。
+func TestDownloadFileResumeRefusesExistingDest(t *testing.T) {
+	e := newTestEnv(t)
+	c := loginClient(t, e)
+	ctx := context.Background()
+	it, err := c.Put(ctx, "", []client.Upload{{Path: "a.txt", Size: 3, Open: readerFunc("abc")}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "a.txt")
+	if err := os.WriteFile(dest, []byte("old"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dest+".part", []byte("a"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.DownloadFile(ctx, it.ID, it.Files[0], client.DownloadOptions{Dest: dest, Resume: true}); !errors.Is(err, client.ErrExists) {
+		t.Fatalf("resume 遇到已存在目标应返回 ErrExists，得到 %v", err)
+	}
+	raw, _ := os.ReadFile(dest)
+	if string(raw) != "old" {
+		t.Fatalf("不得覆盖已有文件，得到 %q", raw)
+	}
+	// 带 --force 才允许续传覆盖。
+	if err := c.DownloadFile(ctx, it.ID, it.Files[0], client.DownloadOptions{Dest: dest, Resume: true, Force: true}); err != nil {
+		t.Fatalf("force + resume 应成功: %v", err)
+	}
+	raw, _ = os.ReadFile(dest)
+	if string(raw) != "abc" {
+		t.Fatalf("续传后内容不对: %q", raw)
+	}
+}
+
+// TestPutProgressReachesTotalWithText 断言带文本时上传进度能到 100%。
+func TestPutProgressReachesTotalWithText(t *testing.T) {
+	e := newTestEnv(t)
+	c := loginClient(t, e)
+	var last, total int64
+	_, err := c.Put(context.Background(), "说明文字", []client.Upload{
+		{Path: "a.bin", Size: 3, Open: readerFunc("abc")},
+	}, func(s, tt int64) { last, total = s, tt })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last != total || total == 0 {
+		t.Fatalf("进度应到 100%%: last=%d total=%d", last, total)
 	}
 }

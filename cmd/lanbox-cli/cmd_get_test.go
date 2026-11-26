@@ -45,3 +45,30 @@ func TestDownloadSummaryErrorMentionsFirstCause(t *testing.T) {
 		t.Fatalf("聚合错误前缀不对: %q", got)
 	}
 }
+
+// TestGetDestPathKeepsSingleFileDir 断言单附件带目录时不被压平成 basename。
+func TestGetDestPathKeepsSingleFileDir(t *testing.T) {
+	// 单附件但带目录：保留目录结构。
+	dir := t.TempDir()
+	got, err := destinationPath(dir, "中文/子目录/报告.txt", true)
+	if err != nil || !strings.HasSuffix(got, filepath.Join("中文", "子目录", "报告.txt")) {
+		t.Fatalf("单附件带目录时应保留路径，得到 %s %v", got, err)
+	}
+	if got != filepath.Join(dir, "中文", "子目录", "报告.txt") {
+		t.Fatalf("落盘路径应完全等于相对路径拼接，得到 %s", got)
+	}
+	// 单附件无目录：压平（等价于 basename）。
+	got, err = destinationPath(dir, "报告.txt", true)
+	if err != nil || got != filepath.Join(dir, "报告.txt") {
+		t.Fatalf("单附件无目录时应落到 basename，得到 %s %v", got, err)
+	}
+	// 多附件：始终保留相对路径。
+	got, err = destinationPath(dir, "photos/a.jpg", false)
+	if err != nil || got != filepath.Join(dir, "photos", "a.jpg") {
+		t.Fatalf("多附件应保留相对路径，得到 %s %v", got, err)
+	}
+	// 越界路径仍应被拒绝。
+	if _, err := destinationPath(dir, "../evil.txt", true); err == nil {
+		t.Fatal("越界路径应被拒绝")
+	}
+}

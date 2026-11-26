@@ -27,7 +27,8 @@ type DownloadOptions struct {
 
 // DownloadFile 下载单个附件：先写 <dest>.part，校验 sha256 后 rename 到 dest。
 func (c *Client) DownloadFile(ctx context.Context, itemID string, f File, o DownloadOptions) error {
-	if !o.Force && !o.Resume {
+	// 目标已存在时一律要求 --force；--resume 只决定是否从 .part 续传。
+	if !o.Force {
 		if _, err := os.Stat(o.Dest); err == nil {
 			return ErrExists
 		}

@@ -18,7 +18,7 @@ type Upload struct {
 }
 
 // Put 上传文字与文件，返回服务端创建的内容。
-// onProgress 可为 nil；sent 只统计文件字节，total 是文件字节数 + 文本字节数。
+// onProgress 可为 nil；sent 与 total 都包含文本字节。
 func (c *Client) Put(ctx context.Context, text string, files []Upload, onProgress func(sent, total int64)) (*Item, error) {
 	var total int64
 	for _, f := range files {
@@ -51,8 +51,9 @@ func (c *Client) Put(ctx context.Context, text string, files []Upload, onProgres
 	return &it, nil
 }
 
-// writeMultipart 把文本与文件写进 multipart 流，并按文件字节回报进度。
+// writeMultipart 把文本与文件写进 multipart 流，按已写字节回报进度（含文本）。
 func writeMultipart(mw *multipart.Writer, text string, files []Upload, onProgress func(int64, int64), total int64) error {
+	var sent int64
 	if text != "" {
 		w, err := mw.CreateFormField("text")
 		if err != nil {
@@ -61,8 +62,11 @@ func writeMultipart(mw *multipart.Writer, text string, files []Upload, onProgres
 		if _, err := io.WriteString(w, text); err != nil {
 			return err
 		}
+		sent += int64(len(text))
+		if onProgress != nil {
+			onProgress(sent, total)
+		}
 	}
-	var sent int64
 	buf := make([]byte, 64<<10)
 	for _, f := range files {
 		// Go 的 Part.FileName() 会丢弃目录信息，路径只能放在字段名里。
