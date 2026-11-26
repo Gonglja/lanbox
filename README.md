@@ -6,6 +6,7 @@
 - HTTPS 单端口，未配置证书时自动生成自签证书
 - 每条内容标注**发布者与来源 IP**
 - 附件流式落盘（内存占用与文件大小无关），支持 Range 断点下载
+- 附件保留上传时的相对路径（目录上传/下载），`GET /api/items/<ID>/zip` 可一键打包（不压缩、不支持断点续传）
 - 实时刷新（SSE），另一端发布后 1 秒内出现
 - 独立账号 + 会话过期 + 登录限速
 
@@ -22,10 +23,42 @@ make build          # 等价于 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w
 #    然后浏览器打开 https://<小主机IP>:8443
 ```
 
+## 命令行客户端 lanbox-cli
+
+`make dist` 同时产出 `lanbox-cli-<os>-<arch>`（与服务端相同的 4 个平台）。放进 PATH 后：
+
+```bash
+# 登录（服务地址与密码；自签证书用 -ca 或 -insecure）
+LANBOX_PASSWORD='...' lanbox-cli login -s https://192.168.1.9:8443 -u admin
+# 密码来源优先级：LANBOX_PASSWORD 环境变量 > 管道 stdin > 终端无回显提示
+
+# 发布文字 / 文件 / 整个目录
+echo "给内网的一句话" | lanbox-cli put -
+lanbox-cli put 报告.pdf -m "内网同事收"
+lanbox-cli put -r ./素材 -m "素材目录"      # 目录必须显式 -r
+
+# 查看与取回
+lanbox-cli ls -n 20
+lanbox-cli files <ID>
+lanbox-cli get <ID> -o ./收件               # 按相对路径还原目录
+lanbox-cli get <ID> --zip ./all.zip         # 整条内容打包（已存在需 --force）
+lanbox-cli get <ID> --resume -o .           # 单文件断点续传
+
+# 其他
+lanbox-cli taken <ID>            # 标记已取走（--undo 撤销）
+lanbox-cli rm <ID>
+lanbox-cli rm-file <ID> <FID>
+lanbox-cli logout
+```
+
+- 退出码：`0` 成功、`1` 一般错误、`2` 用法错误、`3` 网络/证书错误、`4` 认证或会话问题。
+- 会话保存在 `~/.config/lanbox/session.json`（0600，可用 `XDG_CONFIG_HOME` 改位置）。**会话不保存 TLS 选项**，所以每条命令都要重复 `-ca`/`-insecure`；也可以把 `data/tls/cert.pem` 导入系统信任库，之后就不必再传。
+- 全局选项可写在子命令前后：`lanbox-cli -s https://host:8443 ls` 等价于 `lanbox-cli ls -s https://host:8443`。
+
 ## 交叉编译（小主机常见是 ARM）
 
 ```bash
-make dist     # 产出 dist/ 下四个静态二进制 + SHA256SUMS
+make dist     # 产出 dist/ 下 8 个静态二进制（服务端 + CLI 各 4 个平台）+ SHA256SUMS
 ```
 
 | 产物 | 适用 |
@@ -35,18 +68,20 @@ make dist     # 产出 dist/ 下四个静态二进制 + SHA256SUMS
 | `dist/lanbox-linux-armv7` | ARMv7 32 位（树莓派 2/3 32 位系统、N1、老路由器） |
 | `dist/lanbox-linux-386` | x86 32 位（老 Atom 机器） |
 
+`lanbox-cli-*` 是配套的命令行客户端，平台与本表一致。
+
 查目标机架构：`uname -m` → `x86_64` / `aarch64` / `armv7l` / `i686`。
 
 其它常用目标：
 
 | 命令 | 作用 |
 |---|---|
-| `make build` | 只编本机架构到 `./lanbox` |
+| `make build` | 只编本机架构到 `./lanbox` 与 `./lanbox-cli` |
 | `make test` | 跑全部测试 |
 | `make check` | 提交前自检：gofmt + go vet + test |
 | `make run` | 前台运行（读 `./config.json`） |
 | `make install` | 安装到 `/usr/local/bin`（`PREFIX=` 可改） |
-| `make clean` | 清掉 `dist/` 与 `./lanbox` |
+| `make clean` | 清掉 `dist/` 与 `./lanbox`、`./lanbox-cli` |
 | `make help` | 列出全部目标 |
 
 `make dist` 会把当前 git 提交号注入版本：`./lanbox -version` 可查看。
@@ -63,6 +98,8 @@ make dist     # 产出 dist/ 下四个静态二进制 + SHA256SUMS
   "data_dir": "./data",
   "tls": { "cert_file": "", "key_file": "" },
   "max_file_size_mb": 1024,
+  "max_item_size_mb": 2048,
+  "max_files_per_item": 500,
   "min_free_disk_mb": 1024,
   "max_text_bytes": 65536,
   "session_ttl_hours": 168
@@ -75,11 +112,13 @@ make dist     # 产出 dist/ 下四个静态二进制 + SHA256SUMS
 | `data_dir` | `./data` | 数据目录（内容、用户库、证书） |
 | `tls.cert_file` / `tls.key_file` | 空 | 同时填写则使用你自己的证书；留空则自动生成自签证书 |
 | `max_file_size_mb` | 1024 | 单文件上限，超出返回 413 |
+| `max_item_size_mb` | 2048 | 单条内容附件总大小上限，超出返回 413 |
+| `max_files_per_item` | 500 | 单条内容附件数量上限（1..10000，目录上传会用到） |
 | `min_free_disk_mb` | 1024 | 剩余磁盘保护线，低于此值拒绝上传（507） |
 | `max_text_bytes` | 65536 | 单条文字上限 |
 | `session_ttl_hours` | 168 | 会话有效期（滑动续期） |
 
-也可用环境变量覆盖：`LANBOX_LISTEN`、`LANBOX_DATA_DIR`、`LANBOX_TLS_CERT_FILE`、`LANBOX_TLS_KEY_FILE`、`LANBOX_MAX_FILE_SIZE_MB`、`LANBOX_MIN_FREE_DISK_MB`、`LANBOX_MAX_TEXT_BYTES`、`LANBOX_SESSION_TTL_HOURS`。
+也可用环境变量覆盖：`LANBOX_LISTEN`、`LANBOX_DATA_DIR`、`LANBOX_TLS_CERT_FILE`、`LANBOX_TLS_KEY_FILE`、`LANBOX_MAX_FILE_SIZE_MB`、`LANBOX_MAX_ITEM_SIZE_MB`、`LANBOX_MAX_FILES_PER_ITEM`、`LANBOX_MIN_FREE_DISK_MB`、`LANBOX_MAX_TEXT_BYTES`、`LANBOX_SESSION_TTL_HOURS`。
 
 ## 账号
 
@@ -162,7 +201,13 @@ go build ./...     # 编译检查
 9. 两个窗口同时在线 → 一边发布，另一边 1 秒内出现；删除同样实时消失
 10. 管理员可新增用户、重置密码、删除用户；非管理员看不到"用户管理"，且 `GET /api/users` 返回 403
 11. 修改自己的密码 → 当前会话立即失效，需重新登录
+12. 拖入含子目录的文件夹 → 待上传列表显示相对路径，发送后卡片按路径排序并显示目录
+13. 「选择文件夹」与拖拽行为一致；Firefox 不支持 webkitdirectory，此入口在 Firefox 下会退化为选单个文件
+14. 多附件或含目录的内容出现「下载全部 (.zip)」→ 下载后 `unzip -t` 通过，条目名保留路径
+15. `lanbox-cli put -r 目录` → 网页展示带路径；`lanbox-cli get <ID> -o 目录` 后 `sha256sum` 与源一致
 
 ## 不做的事（有意为之）
 
-分片上传/断点续传、zip 打包下载、回收站与自动过期、频道与标签、全文索引、富文本渲染、多语言。
+分片上传/断点续传、回收站与自动过期、频道与标签、全文索引、富文本渲染、多语言。
+
+保留空目录、符号链接与文件权限；zip 断点续传；单附件 >4GB 的 zip（默认配置不会触发）
