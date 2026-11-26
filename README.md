@@ -42,7 +42,7 @@ lanbox-cli ls -n 20
 lanbox-cli files <ID>
 lanbox-cli get <ID> -o ./收件               # 按相对路径还原目录（单附件无目录时直接落到 basename）
 lanbox-cli get <ID> --zip ./all.zip         # 整条内容打包（已存在需 --force）
-lanbox-cli get <ID> --resume -o .           # 单文件断点续传
+lanbox-cli get <ID> --resume -o .           # 单文件断点续传（目标已存在时仍需 --force）
 
 # 其他
 lanbox-cli taken <ID>            # 标记已取走（--undo 撤销）
