@@ -1,6 +1,8 @@
 data/
 /lanbox
 /lanbox-cli
+/lanbox-agent
+/lanbox-agent.exe
 /dist/
 *.test
 *.out

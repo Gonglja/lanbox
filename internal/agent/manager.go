@@ -235,6 +235,18 @@ func (m *Manager) SubmitManual(text string, paths []string) (Record, error) {
 	return rec, nil
 }
 
+// SubmitManualContent 上传已准备好的内容（例如剪贴板图片），
+// 不再检查开关与去重，但仍由调用方负责限额。
+func (m *Manager) SubmitManualContent(text string, kind Kind, files []File, skipped int) (Record, error) {
+	if len(files) == 0 && strings.TrimSpace(text) == "" {
+		return Record{}, fmt.Errorf("内容为空")
+	}
+	d := Decision{Upload: true, Kind: kind, Text: text, Files: files, Skipped: skipped}
+	rec := m.newRecord(d, "manual")
+	m.enqueue(rec, d)
+	return rec, nil
+}
+
 // History 返回本地历史快照（最新在前）。
 func (m *Manager) History() []Record {
 	m.mu.Lock()

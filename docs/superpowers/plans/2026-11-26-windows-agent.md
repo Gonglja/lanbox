@@ -1,6 +1,6 @@
 # lanbox Windows 客户端（lanbox-agent）实现计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 交付 `lanbox-agent.exe`：Wails 窗口 + 托盘常驻，mDNS 发现并固定证书，剪贴板文本/文件/图片按配置自动上传，支持手动发消息/文件/文件夹，可暂停/关闭。
 
@@ -46,7 +46,7 @@
 
 ---
 
-## Task 1: 抽出 `internal/session`
+## Task 1: 抽出 `internal/session` ✅
 
 **Files:** Create `internal/session/session.go`、`internal/session/session_test.go`；Modify `cmd/lanbox-cli/session.go`
 
@@ -69,7 +69,7 @@ func TestRoundTrip(t *testing.T) {
 **Step 5:** `gofmt -l .`、`go vet ./...`、`go test ./cmd/lanbox-cli ./internal/session` 全绿
 **Step 6:** commit `refactor(session): 抽出内部会话包供 CLI 与 GUI 共用`
 
-## Task 2: `internal/agent` 决策 Pipeline
+## Task 2: `internal/agent` 决策 Pipeline ✅
 
 **Files:** Create `internal/agent/clip.go`、`pipeline.go`、`pipeline_test.go`
 
@@ -104,7 +104,7 @@ type File struct { Path, Rel string; Size int64 }
 **Step 4:** 测试通过；`go test ./internal/agent -run TestDecide -v`
 **Step 5:** commit `feat(agent): 剪贴板决策流水线`
 
-## Task 3: `internal/agent` 上传 Manager
+## Task 3: `internal/agent` 上传 Manager ✅
 
 **Files:** Create `manager.go`、`manager_test.go`
 
@@ -129,7 +129,9 @@ func (m *Manager) History() []Record
 单 worker goroutine 消费 job channel；上传用 `context.WithCancel` 支持取消；退避可注入 `sleep` 便于测试。
 **Step 4:** 通过；**Step 5:** commit `feat(agent): 上传队列、退避重试与历史`
 
-## Task 4: `internal/winclip`
+> 实施记录：真机验证（Windows 11 + WebView2 158）——文本、资源管理器复制的文件夹、截图三条链路均成功上传到真实服务端；`-tags e2e` 测试覆盖登录 + 指纹固定 + 文本/目录上传 + 撤回；关闭窗口后进程存活且剪贴板继续上传。
+
+## Task 4: `internal/winclip` ✅
 
 **Files:** Create `api_windows.go`、`clipboard_windows.go`、`dib_windows.go`、`dpapi_windows.go`、`dialog_windows.go`、`dib_test.go`、`stub_other.go`
 
@@ -144,7 +146,7 @@ func (m *Manager) History() []Record
 **Step 4:** `go test ./internal/winclip`
 **Step 5:** commit
 
-## Task 5: 装配层（设置、会话、登录、绑定）
+## Task 5: 装配层（设置、会话、登录、绑定）✅
 
 **Files:** Create `cmd/lanbox-agent/{settings.go,auth.go,app.go,log.go}`
 
@@ -156,7 +158,7 @@ func (m *Manager) History() []Record
 - 测试：`settings_test.go`（默认值合并、未知字段保留）、`auth_test.go`（指纹匹配/不匹配）
 **Commit:** `feat(agent): 客户端装配层与绑定方法`
 
-## Task 6: Wails 外壳 + 托盘 + 单实例 + 日志
+## Task 6: Wails 外壳 + 托盘 + 单实例 + 日志 ✅
 
 **Files:** Create `cmd/lanbox-agent/{main.go,tray.go,assets.go,single_windows.go}`
 
@@ -165,7 +167,7 @@ func (m *Manager) History() []Record
 - 构建：`go build -tags desktop,production -ldflags "-s -w -H=windowsgui"` 通过
 **Commit:** `feat(agent): Wails 窗口、托盘与单实例`
 
-## Task 7: 前端（vanilla，无 Node）
+## Task 7: 前端（vanilla，无 Node）✅
 
 **Files:** Create `cmd/lanbox-agent/frontend/dist/{index.html,app.js,app.css}`
 
@@ -175,7 +177,7 @@ func (m *Manager) History() []Record
 - 验收：`go vet ./...`；`go build` 后手动启动，登录页渲染正常、无 JS 报错
 **Commit:** `feat(agent): 客户端界面`
 
-## Task 8: 构建与文档
+## Task 8: 构建与文档 ✅
 
 **Files:** Modify `Makefile`、`README.md`、`build-windows.ps1`
 
@@ -184,7 +186,7 @@ func (m *Manager) History() []Record
 - `build-windows.ps1`：可选加 `-Agent` 开关
 **Commit:** `docs+chore: agent 构建目标与说明`
 
-## Task 9: 全量验证
+## Task 9: 全量验证 ✅
 
 - `gofmt -l .` 无输出；`go vet ./...`；`go test ./...` 全绿
 - `go build -tags desktop,production ./cmd/lanbox-agent` 产出 exe
