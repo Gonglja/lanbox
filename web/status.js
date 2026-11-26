@@ -246,8 +246,9 @@ async function waitRestart() {
     await new Promise((r) => setTimeout(r, 2000));
     try {
       await api.healthz();
-      toast('服务已恢复', 'ok');
-      await refreshStatus();
+      // 重启后会话表是内存态，需要重新登录：直接刷新页面回到登录界面。
+      toast('服务已恢复，正在刷新…', 'ok');
+      setTimeout(() => location.reload(), 800);
       return;
     } catch {
       // 还在重启，继续等

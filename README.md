@@ -11,13 +11,14 @@
 - 消息正文支持 Markdown（标题、列表、表格、代码块、引用、链接等），发布区可切换预览；原始 HTML 一律当文本
 - 实时刷新（SSE），另一端发布后 1 秒内出现
 - 时间线按本地日期分组（今天 / 昨天 / 日期），相对时间随停留自动刷新
-- 侧栏「状态」页显示服务版本、运行时长、内容与附件统计；管理员另有用户数、磁盘剩余、监听地址、存储路径与 mDNS 状态（每 5 秒自动刷新）
+- 侧栏「状态」页显示服务版本、运行时长、内容与附件统计；管理员另有用户数、磁盘剩余、监听地址、存储路径、mDNS 状态与在线更新入口（每 5 秒自动刷新）
 - 桌面端侧栏可收成 68px 图标栏；管理页占满主内容区、左侧栏保留（宽屏设置两列）
 - 侧栏底部账号行弹出菜单（memos 风格）：外观（二级菜单，四档主题）/ 管理 / 退出登录；`Esc`、点外部、方向键均可用
 - 独立账号 + 会话过期 + 登录限速
 - 另有**纯 web 客户端**（`client/`，可打成单文件 HTML）：任意浏览器填「服务器地址 + 账号」即可收发，视觉与服务端网页一致，零安装、零构建
 - **手机扫码即连**：服务端 Web UI 侧栏「扫码连接」与状态页都能出连接二维码（服务端自写 QR 编码器，零依赖），手机相机扫一下就能打开
 - **局域网发现**：客户端可探测 `.local` 名称（走系统 mDNS 解析），连上一台后还能让服务端列出网内所有实例
+- **在线更新**：服务端与 Windows 客户端都能查新版本、一键升级（SHA256 + 魔数双重校验、旧版本留作 `.old`）并按需回滚；静默检查只提示，升级永远需要人点
 
 ## 快速开始
 
@@ -54,6 +55,12 @@ lanbox-cli get <ID> -o ./收件               # 按相对路径还原目录（�
 lanbox-cli get <ID> --zip ./all.zip         # 整条内容打包（已存在需 --force）
 lanbox-cli get <ID> --resume -o .           # 单文件断点续传（目标已存在时仍需 --force）
 
+# 在线更新（升级与回滚需要管理员；非交互环境要加 --yes）
+lanbox-cli update                # 看当前/最新版本与上次检查时间
+lanbox-cli update --check        # 立即检查
+lanbox-cli update --apply --yes  # 升级并重启服务
+lanbox-cli update --rollback --yes
+
 # 其他
 lanbox-cli taken <ID>            # 标记已取走（--undo 撤销）
 lanbox-cli rm <ID>
@@ -77,7 +84,8 @@ lanbox-cli logout
 - **断线自动重连**：空闲时每 30 秒探活一次 `/api/me`，连续 2 次网络失败才判断线，之后按 2s→5s→10s→20s→30s→60s 退避重连；会话过期用保存的密码自动重登（每分钟最多一次，避开服务端登录限速）；没保存密码、证书指纹不符或连续 3 次认证失败则停手等手动登录。重连中顶部提示条显示倒计时，状态点与托盘图标同步变黄/变红
 - **主题与 Web UI 一致**：顶栏调色板图标可选「跟随系统 / 亮色 / 暗色 / 纸张」，同一套设计令牌与 `lanbox.theme` 键
 - **固定窗口**：456×720，标题栏只有最小化与关闭（不可拖动缩放）
-- **托盘常驻**：关闭窗口默认最小化到托盘（剪贴板继续工作），托盘菜单可打开窗口 / 暂停 / 立即上传剪贴板 / 退出；图标用颜色表示状态（绿=监听中、黄=暂停、红=未登录）
+- **托盘常驻**：关闭窗口默认最小化到托盘（剪贴板继续工作），托盘菜单可打开窗口 / 暂停 / 立即上传剪贴板 / 检查更新 / 退出；图标用颜色表示状态（绿=监听中、黄=暂停、红=未登录）
+- **在线更新**：托盘与设置页「关于与更新」都能查新版本并升级；升级后自动拉起新实例（旧进程退出、设置与会话保留），出问题可在托盘里一键回滚
 - **会话与 CLI 共用**：`%AppData%\lanbox\session.json` 双向兼容，CLI 登录过就直接复用；首次从 CLI 会话恢复时会固定当时的证书指纹（TOFU）
 
 配置在 `%AppData%\lanbox\agent.json`（客户端设置页可改），日志在 `%AppData%\lanbox\agent.log`（2MB × 2 轮转，记录了每次跳过剪贴板的原因）。密码用 Windows DPAPI（当前用户作用域）加密保存，可在设置里关掉「记住密码」。
@@ -281,6 +289,66 @@ CI 跑 `go vet` + `go test`（gofmt 只打告警不阻塞）→ `make dist`（Li
 - 手动重跑：Actions → release → Run workflow，**ref 必须选 Tags 下的 tag**。
 - 构建产物同时作为 workflow artifact 保留 14 天，方便排查失败。
 
+## 在线更新
+
+服务端与 Windows 客户端都内置更新器（`internal/updater`，纯标准库）。**默认只检查、只提示，升级动作必须由人触发**：
+
+| 入口 | 行为 |
+|---|---|
+| 网页「状态」页 → 在线更新 | 非管理员看不到；管理员可「检查更新 / 升级到 vX 并重启 / 回滚到上一版本」 |
+| `lanbox-cli update [--check] [--apply] [--rollback]` | 命令行等价入口，升级/回滚需管理员，非交互环境要 `--yes` |
+| Windows 客户端托盘 | 「检查更新」；有新版时变成「升级到 vX」；有备份时多一项「回滚到上一版本」 |
+| Windows 客户端设置 → 关于与更新 | 版本、更新说明、检查/升级/回滚按钮，以及静默检查开关 |
+
+### 怎么判断「有没有新版」
+
+默认走 GitHub Release 的静态路径，**不调 API**（未认证有 60 次/小时的限流）：
+
+```
+{base}/releases/latest/download/SHA256SUMS
+  → 302 {base}/releases/download/v1.2.4/SHA256SUMS   ← 从最终 URL 解析版本
+{base}/releases/download/v1.2.4/lanbox-linux-arm64   ← 下载对应平台的产物
+```
+
+`base` 默认 `https://github.com/Gonglja/lanbox`。产物名与 `make dist` 完全一致
+（`lanbox-linux-amd64`、`lanbox-linux-armv7`、`lanbox-windows-amd64.exe`、`lanbox-agent-windows-amd64.exe` …）。
+
+### 换更新源 / 用清单
+
+- `update.url` 写成基地址（如 `https://gitea.example.com/alex/lanbox`）→ 走同样的 `/releases/latest/download/` 路径。
+- `update.url` 以 `.json` 结尾 → 读自定义清单，适配任意静态站 / 镜像：
+
+```json
+{
+  "version": "1.2.4",
+  "published": "2026-11-27T10:00:00Z",
+  "notes": "- 修复了……",
+  "assets": [
+    { "name": "lanbox-linux-amd64", "url": "https://…/lanbox-linux-amd64", "size": 12345678, "sha256": "…64位hex…" }
+  ]
+}
+```
+
+- 私有仓库：`LANBOX_UPDATE_TOKEN` 会作为 `Authorization: Bearer` 带上（只读环境变量，不落盘）。
+
+### 安全边界
+
+- 下载后会校验 **SHA256**（来自同一 Release 的 `SHA256SUMS`）与**文件魔数**（ELF / PE），校验不过拒绝替换。
+- 清单缺失或缺少本平台条目 → 拒绝升级，**不会降级成「不校验」**。
+- 只替换可执行文件：`config.json`、`data/`、会话文件、`agent.json` 一律不动。
+- 备份与回滚：旧程序改名为 `<exe>.old`，出问题时：
+  - 服务端：`./lanbox -rollback`（**不需要服务能启动**，专治升级后起不来）或网页/CLI 的回滚按钮；
+  - Windows 客户端：托盘或设置页的「回滚到上一版本」。
+  - 回滚后当前（有问题的）程序留在 `<exe>.failed` 供排查。
+
+### 平台差异
+
+- Windows：运行中的 exe 可以改名（同目录 `MoveFile`），所以是「改名 → 写新文件 → 启动新进程 → 退出」。
+  agent 单实例互斥用隐藏参数 `-wait-pid <pid>` 交接，新进程会先等旧进程退出再抢锁。
+  `Program Files` 下需要管理员权限，程序会在下载阶段就报「目录不可写」，不会留下半残状态。
+- Linux：`rename` + `syscall.Exec` 原地重启（PID 不变），systemd 的 `Restart=always` 继续兜底。
+- Android：不支持在线更新（宿主没有进程自重启语义），相关接口返回 `501`。
+
 APK 签名：配了下面这组 secrets 就用正式签名（`android/keystore.properties` 由 CI 现场生成，
 仓库里不放密钥）；没配则退化成 debug 签名（能装，但无法覆盖安装正式版，会打 `::warning::`）。
 
@@ -313,7 +381,8 @@ base64 -w0 android/lanbox-release.jks > keystore.b64
   "min_free_disk_mb": 1024,
   "max_text_bytes": 65536,
   "session_ttl_hours": 168,
-  "mdns": { "enabled": true, "hostname": "lanbox", "instance": "" }
+  "mdns": { "enabled": true, "hostname": "lanbox", "instance": "" },
+  "update": { "check": "daily", "url": "" }
 }
 ```
 
@@ -331,8 +400,12 @@ base64 -w0 android/lanbox-release.jks > keystore.b64
 | `mdns.enabled` | `true` | 是否在局域网内以 mDNS 通告 |
 | `mdns.hostname` | `lanbox` | 通告为 `https://<hostname>.local:<端口>` |
 | `mdns.instance` | 空（同 hostname） | 服务实例名（`_lanbox._tcp` 的 PTR 名称） |
+| `update.check` | `daily` | 后台检查更新频率：`off` / `startup`（只启动时查一次）/ `daily`（启动 + 每天）；只提示，不会自动升级 |
+| `update.url` | 空 | 更新源。留空用 GitHub Release；以 `.json` 结尾则读取该清单；其它值当作 Release 基地址（自建 Gitea / 镜像） |
 
-也可用环境变量覆盖：`LANBOX_LISTEN`、`LANBOX_DATA_DIR`、`LANBOX_TLS_CERT_FILE`、`LANBOX_TLS_KEY_FILE`、`LANBOX_MAX_FILE_SIZE_MB`、`LANBOX_MAX_ITEM_SIZE_MB`、`LANBOX_MIN_FREE_DISK_MB`、`LANBOX_MAX_FILES_PER_ITEM`、`LANBOX_MAX_TEXT_BYTES`、`LANBOX_SESSION_TTL_HOURS`、`LANBOX_MDNS_ENABLED`、`LANBOX_MDNS_HOSTNAME`、`LANBOX_MDNS_INSTANCE`。
+也可用环境变量覆盖：`LANBOX_LISTEN`、`LANBOX_DATA_DIR`、`LANBOX_TLS_CERT_FILE`、`LANBOX_TLS_KEY_FILE`、`LANBOX_MAX_FILE_SIZE_MB`、`LANBOX_MAX_ITEM_SIZE_MB`、`LANBOX_MIN_FREE_DISK_MB`、`LANBOX_MAX_FILES_PER_ITEM`、`LANBOX_MAX_TEXT_BYTES`、`LANBOX_SESSION_TTL_HOURS`、`LANBOX_MDNS_ENABLED`、`LANBOX_MDNS_HOSTNAME`、`LANBOX_MDNS_INSTANCE`、`LANBOX_UPDATE_CHECK`、`LANBOX_UPDATE_URL`。
+
+私有仓库拉 Release 还需要 `LANBOX_UPDATE_TOKEN`（作为 Bearer 令牌，只从环境变量读，不写盘、不回传网页）。
 
 ### 网页配置与覆盖文件
 
@@ -535,6 +608,8 @@ node --check client/app.js         # 语法校验（web/*.js 同样适用）
 ## 不做的事（有意为之）
 
 分片上传/断点续传、回收站与自动过期、频道与标签、全文索引、富文本编辑器、多语言。
+
+在线更新只做「整包替换 + 回滚」：不做增量/差分更新、不做签名证书（GPG/Ed25519）验证、不做无人值守自动升级、Android 与 `lanbox-cli` 自身不支持自更新。
 
 保留空目录、符号链接与文件权限；zip 断点续传；单附件 >4GB 的 zip（默认配置不会触发）
 

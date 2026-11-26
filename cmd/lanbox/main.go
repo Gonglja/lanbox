@@ -30,11 +30,15 @@ func run() error {
 	cfgPath := flag.String("config", "config.json", "配置文件路径（不存在则使用默认值）")
 	resetAdmin := flag.Bool("reset-admin-password", false, "重置 admin 密码并退出")
 	showVersion := flag.Bool("version", false, "打印版本号并退出")
+	rollback := flag.Bool("rollback", false, "把上一次在线升级前的版本换回来并退出（服务起不来时的补救）")
 	flag.Parse()
 
 	if *showVersion {
 		fmt.Printf("lanbox %s\n", version)
 		return nil
+	}
+	if *rollback {
+		return rollbackSelf()
 	}
 
 	logger := log.New(os.Stdout, "", log.LstdFlags)

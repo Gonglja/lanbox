@@ -1,7 +1,7 @@
 # lanbox 自动更新（检查 + 手动升级 + 回滚）设计
 
 日期：2026-11-27
-状态：设计已确认，待实现
+状态：已实现
 范围：新增零依赖包 `internal/updater`；服务端 `lanbox` 增加更新配置、四个管理接口、状态页入口与 `lanbox-cli update`；Windows `lanbox-agent` 增加设置页「关于」与托盘入口。**只替换可执行文件**，不碰 `config.json`、`data/`、`~/.config/lanbox`、`agent.json`。不改存储格式、不引入第三方依赖。
 
 ## 1. 目标

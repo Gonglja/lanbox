@@ -2,6 +2,7 @@ package updater
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"os"
@@ -21,21 +22,39 @@ var (
 	ErrNotSupported = errors.New("当前运行环境不支持在线更新")
 )
 
+// Stamp 是零值序列化成 null 的时间戳（encoding/json 的 omitempty 对 time.Time 无效）。
+type Stamp struct{ time.Time }
+
+func (s Stamp) MarshalJSON() ([]byte, error) {
+	if s.IsZero() {
+		return []byte("null"), nil
+	}
+	return json.Marshal(s.Time)
+}
+
+func (s *Stamp) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		s.Time = time.Time{}
+		return nil
+	}
+	return json.Unmarshal(b, &s.Time)
+}
+
 // State 是对外暴露的更新状态快照（HTTP JSON / Wails 绑定共用）。
 type State struct {
-	Current     string    `json:"current"`
-	Latest      string    `json:"latest,omitempty"`
-	Pending     string    `json:"pending,omitempty"` // 已替换、等重启生效的版本
-	Notes       string    `json:"notes,omitempty"`
-	Published   time.Time `json:"published,omitempty"`
-	Size        int64     `json:"size,omitempty"`
-	CheckedAt   time.Time `json:"checked_at,omitempty"`
-	CheckError  string    `json:"check_error,omitempty"`
-	Available   bool      `json:"available"`
-	Updating    bool      `json:"updating"`
-	Progress    int       `json:"progress"`
-	CanRollback bool      `json:"can_rollback"`
-	Supported   bool      `json:"supported"`
+	Current     string `json:"current"`
+	Latest      string `json:"latest,omitempty"`
+	Pending     string `json:"pending,omitempty"` // 已替换、等重启生效的版本
+	Notes       string `json:"notes,omitempty"`
+	Published   Stamp  `json:"published"`
+	Size        int64  `json:"size,omitempty"`
+	CheckedAt   Stamp  `json:"checked_at"`
+	CheckError  string `json:"check_error,omitempty"`
+	Available   bool   `json:"available"`
+	Updating    bool   `json:"updating"`
+	Progress    int    `json:"progress"`
+	CanRollback bool   `json:"can_rollback"`
+	Supported   bool   `json:"supported"`
 }
 
 // ManagerOptions 是构造 Manager 的输入。
@@ -122,7 +141,7 @@ func (m *Manager) Check(ctx context.Context) (State, error) {
 	rel, err := up.Check(ctx)
 
 	m.mu.Lock()
-	m.st.CheckedAt = m.now()
+	m.st.CheckedAt = Stamp{m.now()}
 	if err != nil {
 		if errors.Is(err, ErrUpToDate) {
 			m.st.Latest = rel.Version
@@ -144,7 +163,7 @@ func (m *Manager) Check(ctx context.Context) (State, error) {
 	m.rel = rel
 	m.st.Latest = rel.Version
 	m.st.Notes = rel.Notes
-	m.st.Published = rel.Published
+	m.st.Published = Stamp{rel.Published}
 	m.st.Size = rel.Size
 	m.st.Available = true
 	m.st.CheckError = ""

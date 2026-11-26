@@ -92,6 +92,7 @@ func cmdUpdate(ctx context.Context, g *globals, args []string, stdin *os.File) e
 		}
 		if !g.json {
 			fmt.Fprintln(g.stdout, "已回滚，服务正在重启。")
+			fmt.Fprintln(g.stdout, "提示：服务端会话保存在内存里，重启后需要重新登录。")
 		}
 	}
 
