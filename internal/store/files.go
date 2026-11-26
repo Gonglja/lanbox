@@ -124,7 +124,12 @@ func (s *Store) FilePath(itemID, fileID string) (string, *File, error) {
 	if found == nil {
 		return "", nil, ErrFileNotFound
 	}
-	p := filepath.Join(s.filesDir(itemID), found.ID+"__"+found.Name)
+	// 磁盘名一直是 <文件ID>__<basename>；旧数据没有 path，name 也非空，能直接命中。
+	name := found.Name
+	if name == "" {
+		name = path.Base(found.RelPath())
+	}
+	p := filepath.Join(s.filesDir(itemID), found.ID+"__"+name)
 	return p, found, nil
 }
 

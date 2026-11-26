@@ -35,10 +35,22 @@ const MaxFilesPerItem = 20
 // File 是一个附件。
 type File struct {
 	ID        string `json:"id"`
-	Name      string `json:"name"`
+	Path      string `json:"path"` // 相对路径，如 "photos/2024/a.jpg"
+	Name      string `json:"name"` // basename，兼容旧前端与磁盘后缀
 	Size      int64  `json:"size"`
 	SHA256    string `json:"sha256"`
 	Downloads int64  `json:"downloads"`
+}
+
+// RelPath 返回附件在内容内的相对路径；旧数据没有 path 时回退到文件名。
+func (f File) RelPath() string {
+	if f.Path != "" {
+		return f.Path
+	}
+	if f.Name != "" {
+		return f.Name
+	}
+	return f.ID
 }
 
 // Item 是一条内容（文本和/或附件）。

@@ -161,3 +161,48 @@ func TestSanitizeName(t *testing.T) {
 		t.Fatalf("超长名字应被截断并保留扩展名: %q", got)
 	}
 }
+
+func TestFileRelPathFallsBackToName(t *testing.T) {
+	f := File{ID: "f1", Name: "a.txt"}
+	if got := f.RelPath(); got != "a.txt" {
+		t.Fatalf("无 path 时应回退文件名，得到 %q", got)
+	}
+	f.Path = "photos/a.txt"
+	if got := f.RelPath(); got != "photos/a.txt" {
+		t.Fatalf("有 path 时应返回路径，得到 %q", got)
+	}
+}
+
+func TestOpenLegacyMetaWithoutPath(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "items")
+	dir := filepath.Join(root, "0000000000001-abc")
+	if err := os.MkdirAll(filepath.Join(dir, "files"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"id":"0000000000001-abc","created_at":"2026-01-01T00:00:00Z","created_by":"u","files":[{"id":"f1","name":"旧 文件.txt","size":3,"sha256":"abc"}]}`
+	if err := os.WriteFile(filepath.Join(dir, "meta.json"), []byte(legacy), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "files", "f1__旧 文件.txt"), []byte("abc"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(root, Options{})
+	if err != nil {
+		t.Fatalf("打开存储失败: %v", err)
+	}
+	it, err := s.Get("0000000000001-abc")
+	if err != nil {
+		t.Fatalf("读取旧内容失败: %v", err)
+	}
+	if it.Files[0].Path != "" || it.Files[0].RelPath() != "旧 文件.txt" {
+		t.Fatalf("旧数据应按 name 回退: %+v", it.Files[0])
+	}
+	disk, _, err := s.FilePath(it.ID, "f1")
+	if err != nil {
+		t.Fatalf("旧数据附件路径解析失败: %v", err)
+	}
+	if _, err := os.Stat(disk); err != nil {
+		t.Fatalf("旧附件应能定位到磁盘: %v", err)
+	}
+}
