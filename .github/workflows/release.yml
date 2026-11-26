@@ -70,9 +70,31 @@ jobs:
       - name: 自检（go vet + go test）
         # 没直接用 make check：仓库里有几个结构体字段是手对齐的，gofmt 会改；
         # 所以格式只做提示不阻塞，真正阻塞的是 vet 与 test。
+        # 失败时把关键行以 ::error:: 输出，方便在 Actions 摘要里直接看到（日志需要登录）。
         run: |
-          go vet ./...
-          go test ./... -count=1
+          set +e
+          mkdir -p .ci-logs
+          go vet ./... > .ci-logs/vet.log 2>&1; vrc=$?
+          go test ./... -count=1 > .ci-logs/test.log 2>&1; trc=$?
+          set -e
+          cat .ci-logs/vet.log
+          cat .ci-logs/test.log
+          if [ $vrc -ne 0 ]; then
+            grep -v '^#' .ci-logs/vet.log | head -10 | while IFS= read -r l; do echo "::error title=go vet::${l}"; done
+          fi
+          if [ $trc -ne 0 ]; then
+            grep -E '^(FAIL|--- FAIL|panic:|\s+[^ ].*\.go:[0-9]+:)' .ci-logs/test.log | head -10 | while IFS= read -r l; do echo "::error title=go test::${l}"; done
+          fi
+          [ $vrc -eq 0 ] && [ $trc -eq 0 ]
+
+      - name: 上传失败日志
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: .ci-logs/*.log
+          retention-days: 7
+          if-no-files-found: ignore
 
       - name: gofmt 提示（不阻塞）
         run: |

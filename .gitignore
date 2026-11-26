@@ -22,3 +22,6 @@ android/*.jks
 # 本机构建产物
 /lanbox.exe
 /lanbox-cli.exe
+
+# CI 日志（工作流失败时上传 artifact）
+.ci-logs/
