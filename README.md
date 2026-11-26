@@ -12,8 +12,8 @@
 ## 快速开始
 
 ```bash
-# 1. 编译（需要 Go 1.24+，仅标准库）
-CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o lanbox ./cmd/lanbox
+# 1. 编译本机架构（需要 Go 1.24+，仅标准库）
+make build          # 等价于 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=..." -o lanbox ./cmd/lanbox
 
 # 2. 直接运行（默认监听 :8443，数据在 ./data）
 ./lanbox
@@ -21,6 +21,35 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o lanbox ./cmd/lanbox
 # 3. 首次启动会打印 admin 的随机密码，请立即保存
 #    然后浏览器打开 https://<小主机IP>:8443
 ```
+
+## 交叉编译（小主机常见是 ARM）
+
+```bash
+make dist     # 产出 dist/ 下四个静态二进制 + SHA256SUMS
+```
+
+| 产物 | 适用 |
+|---|---|
+| `dist/lanbox-linux-amd64` | x86_64（大多数软路由、N100 小主机、虚拟机） |
+| `dist/lanbox-linux-arm64` | ARM64（树莓派 3/4/5 64 位系统、RK3399 等） |
+| `dist/lanbox-linux-armv7` | ARMv7 32 位（树莓派 2/3 32 位系统、N1、老路由器） |
+| `dist/lanbox-linux-386` | x86 32 位（老 Atom 机器） |
+
+查目标机架构：`uname -m` → `x86_64` / `aarch64` / `armv7l` / `i686`。
+
+其它常用目标：
+
+| 命令 | 作用 |
+|---|---|
+| `make build` | 只编本机架构到 `./lanbox` |
+| `make test` | 跑全部测试 |
+| `make check` | 提交前自检：gofmt + go vet + test |
+| `make run` | 前台运行（读 `./config.json`） |
+| `make install` | 安装到 `/usr/local/bin`（`PREFIX=` 可改） |
+| `make clean` | 清掉 `dist/` 与 `./lanbox` |
+| `make help` | 列出全部目标 |
+
+`make dist` 会把当前 git 提交号注入版本：`./lanbox -version` 可查看。
 
 浏览器首次访问自签证书会警告，选择"继续访问"；需要长期免警告见下方"信任自签证书"。
 

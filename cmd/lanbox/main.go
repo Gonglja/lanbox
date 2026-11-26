@@ -24,6 +24,9 @@ import (
 	"lanbox/internal/tlsutil"
 )
 
+// version 由构建时注入：-ldflags "-X main.version=v1.0.0"
+var version = "dev"
+
 func main() {
 	if err := run(); err != nil {
 		log.Fatalf("lanbox 启动失败: %v", err)
@@ -33,7 +36,13 @@ func main() {
 func run() error {
 	cfgPath := flag.String("config", "config.json", "配置文件路径（不存在则使用默认值）")
 	resetAdmin := flag.Bool("reset-admin-password", false, "重置 admin 密码并退出")
+	showVersion := flag.Bool("version", false, "打印版本号并退出")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("lanbox %s\n", version)
+		return nil
+	}
 
 	logger := log.New(os.Stdout, "", log.LstdFlags)
 	cfg, err := config.Load(*cfgPath)
