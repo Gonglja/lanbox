@@ -1,9 +1,10 @@
 # lanbox 构建入口
 #
-#   make            等价于 make dist（四个平台的静态二进制 + 校验和）
+#   make            等价于 make dist（全部平台的静态二进制 + 校验和）
 #   make build      只编本机架构
 #   make dist       交叉编译 linux/amd64、linux/arm64、linux/armv7、linux/386
 #                   同时产出 CLI（lanbox-cli），与服务端同一批平台
+#   make windows    只编 Windows 的 exe（amd64/arm64，服务端 + CLI）
 #   make test       跑全部测试
 #   make check      gofmt + go vet + test（提交前自检）
 #   make clean      清掉 dist/ 与本机二进制
@@ -19,25 +20,32 @@ VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev
 GOFLAGS  := -trimpath
 LDFLAGS  := -s -w -X main.version=$(VERSION)
 
-# 交叉编译目标：os/arch[/GOARM]
+# 交叉编译目标：os/arch[/GOARM]。Windows 单独成组，产物带 .exe 后缀。
 TARGETS  := linux/amd64 linux/arm64 linux/arm/7 linux/386
+WINTARGETS := windows/amd64 windows/arm64
 
 HOST_OS   := $(shell go env GOOS)
 HOST_ARCH := $(shell go env GOARCH)
+# 在 Windows 上本机编译时产物需要 .exe 后缀。
+ifeq ($(HOST_OS),windows)
+EXE := .exe
+else
+EXE :=
+endif
 
 PREFIX ?= /usr/local
 
-.PHONY: all build dist checksums test vet fmt check run install clean help
+.PHONY: all build dist windows checksums test vet fmt check run install clean help
 
 all: dist
 
 ## build: 编译本机架构到 ./lanbox 与 ./lanbox-cli
 build:
-	CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(APP) $(CMD)
-	CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(CLI) $(CLI_CMD)
-	@echo "已生成 ./$(APP) 与 ./$(CLI)（$(HOST_OS)/$(HOST_ARCH)，版本 $(VERSION)）"
+	CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(APP)$(EXE) $(CMD)
+	CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(CLI)$(EXE) $(CLI_CMD)
+	@echo "已生成 ./$(APP)$(EXE) 与 ./$(CLI)$(EXE)（$(HOST_OS)/$(HOST_ARCH)，版本 $(VERSION)）"
 
-## dist: 交叉编译全部目标到 dist/
+## dist: 交叉编译全部目标（Linux + Windows）到 dist/
 dist:
 	@mkdir -p $(DIST)
 	@set -eu; \
@@ -56,7 +64,24 @@ dist:
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch GOARM=$$goarm \
 			go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST)/$(CLI)-$$os-$$arch$$suffix $(CLI_CMD); \
 	done
+	@$(MAKE) --no-print-directory windows
 	@$(MAKE) --no-print-directory checksums
+
+## windows: 交叉编译 Windows exe（amd64/arm64，服务端 + CLI）
+## 在 Windows 上（没有 POSIX shell）请改用：powershell -ExecutionPolicy Bypass -File build-windows.ps1
+windows:
+	@mkdir -p $(DIST)
+	@set -eu; \
+	for t in $(WINTARGETS); do \
+		os=$${t%%/*}; \
+		arch=$${t#*/}; \
+		name=$(APP)-$$os-$$arch.exe; \
+		echo "==> $$name  ($$os/$$arch)"; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch \
+			go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST)/$$name $(CMD); \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch \
+			go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST)/$(CLI)-$$os-$$arch.exe $(CLI_CMD); \
+	done
 
 ## checksums: 生成并打印 dist/SHA256SUMS
 checksums:
@@ -94,7 +119,7 @@ install: build
 
 ## clean: 清理构建产物
 clean:
-	rm -rf $(DIST) $(APP) $(CLI)
+	rm -rf $(DIST) $(APP) $(CLI) $(APP).exe $(CLI).exe
 
 ## help: 列出可用目标
 help:

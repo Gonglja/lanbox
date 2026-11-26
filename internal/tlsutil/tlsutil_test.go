@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -56,7 +57,9 @@ func TestEnsureGeneratesAndReuses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	// Windows 上没有 Unix 的权限位模型（Go 一律报 0666/0777），
+	// 私钥收紧到 0600 只在类 Unix 平台可断言。
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("私钥权限应为 0600，得到 %v", info.Mode().Perm())
 	}
 }

@@ -6,14 +6,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"lanbox/internal/client"
 )
 
-// configDir 返回配置目录（$XDG_CONFIG_HOME/lanbox 或 ~/.config/lanbox）。
+// configDir 返回配置目录：$XDG_CONFIG_HOME/lanbox 优先；
+// Windows 用 %AppData%\lanbox；其它平台用 ~/.config/lanbox。
 func configDir() (string, error) {
 	if d := os.Getenv("XDG_CONFIG_HOME"); d != "" {
 		return filepath.Join(d, "lanbox"), nil
+	}
+	// Windows 没有 ~/.config 约定，用系统提供的漫游配置目录。
+	if runtime.GOOS == "windows" {
+		if d, err := os.UserConfigDir(); err == nil && d != "" {
+			return filepath.Join(d, "lanbox"), nil
+		}
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -41,7 +49,9 @@ func saveSession(s *client.Session) error {
 		return fmt.Errorf("创建配置目录失败: %w", err)
 	}
 	// MkdirAll 对已存在的目录不改权限，旧版本可能留下 0755，这里强制收紧。
-	if err := os.Chmod(dir, 0o700); err != nil {
+	// Windows 的 Go 文件权限是只读位模拟，Chmod 对目录无实际意义，失败也不影响安全，
+	// 因此仅在类 Unix 平台把它当作硬错误。
+	if err := os.Chmod(dir, 0o700); err != nil && runtime.GOOS != "windows" {
 		return fmt.Errorf("设置配置目录权限失败: %w", err)
 	}
 	raw, err := json.MarshalIndent(s, "", "  ")

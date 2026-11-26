@@ -53,13 +53,13 @@ lanbox-cli logout
 ```
 
 - 退出码：`0` 成功、`1` 一般错误、`2` 用法错误、`3` 网络/证书错误、`4` 认证或会话问题。
-- 会话保存在 `~/.config/lanbox/session.json`（0600，可用 `XDG_CONFIG_HOME` 改位置）。**会话不保存 TLS 选项**，所以每条命令都要重复 `-ca`/`-insecure`；也可以把 `data/tls/cert.pem` 导入系统信任库，之后就不必再传。
+- 会话保存在 `~/.config/lanbox/session.json`（0600，可用 `XDG_CONFIG_HOME` 改位置；Windows 上是 `%AppData%\lanbox\session.json`）。**会话不保存 TLS 选项**，所以每条命令都要重复 `-ca`/`-insecure`；也可以把 `data/tls/cert.pem` 导入系统信任库，之后就不必再传。
 - 全局选项可写在子命令前后：`lanbox-cli -s https://host:8443 ls` 等价于 `lanbox-cli ls -s https://host:8443`。
 
-## 交叉编译（小主机常见是 ARM）
+## 交叉编译
 
 ```bash
-make dist     # 产出 dist/ 下 8 个静态二进制（服务端 + CLI 各 4 个平台）+ SHA256SUMS
+make dist     # 产出 dist/ 下 12 个静态二进制（Linux + Windows，服务端 + CLI）+ SHA256SUMS
 ```
 
 | 产物 | 适用 |
@@ -68,16 +68,19 @@ make dist     # 产出 dist/ 下 8 个静态二进制（服务端 + CLI 各 4 �
 | `dist/lanbox-linux-arm64` | ARM64（树莓派 3/4/5 64 位系统、RK3399 等） |
 | `dist/lanbox-linux-armv7` | ARMv7 32 位（树莓派 2/3 32 位系统、N1、老路由器） |
 | `dist/lanbox-linux-386` | x86 32 位（老 Atom 机器） |
+| `dist/lanbox-windows-amd64.exe` | Windows x64（Win10/11、Server 2016+） |
+| `dist/lanbox-windows-arm64.exe` | Windows on ARM |
 
-`lanbox-cli-*` 是配套的命令行客户端，平台与本表一致。
+`lanbox-cli-*` 是配套的命令行客户端，平台与本表一致（Windows 版同样带 `.exe`）。
 
-查目标机架构：`uname -m` → `x86_64` / `aarch64` / `armv7l` / `i686`。
+查目标机架构：`uname -m` → `x86_64` / `aarch64` / `armv7l` / `i686`；Windows 看「系统信息 → 系统类型」。
 
 其它常用目标：
 
 | 命令 | 作用 |
 |---|---|
-| `make build` | 只编本机架构到 `./lanbox` 与 `./lanbox-cli` |
+| `make build` | 只编本机架构到 `./lanbox` 与 `./lanbox-cli`（Windows 上自动带 `.exe`） |
+| `make windows` | 只编 Windows 的 4 个产物（amd64/arm64 × 服务端/CLI） |
 | `make test` | 跑全部测试 |
 | `make check` | 提交前自检：gofmt + go vet + test |
 | `make run` | 前台运行（读 `./config.json`） |
@@ -86,6 +89,25 @@ make dist     # 产出 dist/ 下 8 个静态二进制（服务端 + CLI 各 4 �
 | `make help` | 列出全部目标 |
 
 `make dist` 会把当前 git 提交号注入版本：`./lanbox -version` 可查看。
+
+Windows 版说明：
+
+- 是**控制台程序**，双击会弹一个不带输出的窗口；建议在 PowerShell / cmd 里运行，或用
+  `start /b lanbox.exe` 放后台，数据目录默认仍是 `./data`。
+- **只想拿 exe 就用构建脚本**（不依赖 make / POSIX shell）：
+
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File build-windows.ps1
+  # 指定版本与架构
+  powershell -ExecutionPolicy Bypass -File build-windows.ps1 -Version v1.0.0 -Arch amd64
+  ```
+
+  产物与 `make windows` 一致：`dist\lanbox-windows-{amd64,arm64}.exe`、`dist\lanbox-cli-windows-{amd64,arm64}.exe`，并生成 `dist\SHA256SUMS`。
+- 改 `listen` 后的「立即重启」可用：Windows 没有 `exec(2)`，实现是**启动新进程再退出旧进程**（PID 会变）。
+- `data/tls`、会话文件的 0600/0700 收紧只在类 Unix 平台生效；Windows 用文件系统 ACL，Go 的权限位不适用。
+- mDNS 通告与 `lanbox-cli discover` 在 Windows 上可用（会逐网卡加入组播组并固定出口，避免被虚拟网卡抢走）。
+
+
 
 浏览器首次访问自签证书会警告，选择"继续访问"；需要长期免警告见下方"信任自签证书"。
 

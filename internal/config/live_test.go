@@ -10,7 +10,7 @@ import (
 func TestLiveUpdateHotAndRestartFields(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")
-	writeFile(t, cfgPath, `{"data_dir":"`+dir+`"}`)
+	writeFile(t, cfgPath, `{"data_dir":`+jsonPath(dir)+`}`)
 
 	var gotPrev, gotNext Config
 	applied := 0
@@ -55,7 +55,7 @@ func TestLiveUpdateHotAndRestartFields(t *testing.T) {
 func TestLiveRejectsInvalidValuesWithoutWriting(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")
-	writeFile(t, cfgPath, `{"data_dir":"`+dir+`"}`)
+	writeFile(t, cfgPath, `{"data_dir":`+jsonPath(dir)+`}`)
 	l, err := OpenLive(cfgPath, Hooks{})
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +73,7 @@ func TestLiveRejectsInvalidValuesWithoutWriting(t *testing.T) {
 func TestLiveRestartCooldown(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")
-	writeFile(t, cfgPath, `{"data_dir":"`+dir+`"}`)
+	writeFile(t, cfgPath, `{"data_dir":`+jsonPath(dir)+`}`)
 	calls := 0
 	now := time.Now()
 	l, err := OpenLive(cfgPath, Hooks{Restart: func() { calls++ }})

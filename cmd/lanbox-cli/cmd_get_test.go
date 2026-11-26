@@ -9,13 +9,18 @@ import (
 
 // TestSafeJoin 断言服务端返回的相对路径不会逃出 -o 目录。
 func TestSafeJoin(t *testing.T) {
-	if got, err := safeJoin("/tmp/x", "photos/a.jpg"); err != nil || got != filepath.Join("/tmp/x", "photos", "a.jpg") {
+	base := filepath.Join(string(filepath.Separator), "tmp", "x")
+	if got, err := safeJoin(base, "photos/a.jpg"); err != nil || got != filepath.Join(base, "photos", "a.jpg") {
 		t.Fatalf("正常路径应通过: %q %v", got, err)
 	}
-	for _, bad := range []string{"../evil", "../../etc/passwd", "/etc/passwd"} {
-		if _, err := safeJoin("/tmp/x", bad); err == nil {
+	for _, bad := range []string{"../evil", "../../etc/passwd", "/etc/passwd", `\etc\passwd`} {
+		if _, err := safeJoin(base, bad); err == nil {
 			t.Fatalf("%q 应被拒绝", bad)
 		}
+	}
+	// Windows 的绝对路径（带盘符）也必须被拒绝。
+	if _, err := safeJoin(base, `C:\Windows\system32`); err == nil {
+		t.Fatalf("带盘符的绝对路径应被拒绝")
 	}
 }
 

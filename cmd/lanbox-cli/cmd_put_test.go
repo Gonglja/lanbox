@@ -35,6 +35,7 @@ func TestPutRejectsOversizedStdin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer f.Close() // Windows 上未关闭的文件会阻塞 t.TempDir 的清理
 	if _, err := f.Write(bytes.Repeat([]byte("a"), maxStdinText+1)); err != nil {
 		t.Fatal(err)
 	}
@@ -53,6 +54,7 @@ func TestPutRejectsTextFlagWithStdin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer f.Close() // Windows 上未关闭的文件会阻塞 t.TempDir 的清理
 	f.WriteString("x")
 	f.Seek(0, io.SeekStart)
 	g := &globals{stdout: io.Discard, stderr: io.Discard}
@@ -67,6 +69,7 @@ func TestPutRejectsMultipleStdin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer f.Close() // Windows 上未关闭的文件会阻塞 t.TempDir 的清理
 	f.WriteString("x")
 	f.Seek(0, io.SeekStart)
 	g := &globals{stdout: io.Discard, stderr: io.Discard}

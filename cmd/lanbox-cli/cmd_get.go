@@ -53,6 +53,14 @@ func destinationPath(outDir, rel string, single bool) (string, error) {
 
 // safeJoin 把内容内的相对路径安全地拼到 base 下，越界返回错误。
 func safeJoin(base, rel string) (string, error) {
+	// 服务端返回的必须是相对路径。Windows 的 filepath.IsAbs 不认 "/etc/passwd"
+	// （它没有盘符），所以先按两种分隔符显式拒绝以根开头的写法。
+	if strings.HasPrefix(rel, "/") || strings.HasPrefix(rel, `\`) {
+		return "", fmt.Errorf("服务端返回的路径不安全: %q", rel)
+	}
+	if filepath.VolumeName(rel) != "" {
+		return "", fmt.Errorf("服务端返回的路径不安全: %q", rel)
+	}
 	clean := filepath.Clean(filepath.FromSlash(rel))
 	if clean == "." || filepath.IsAbs(clean) || clean == ".." ||
 		strings.HasPrefix(clean, ".."+string(filepath.Separator)) {

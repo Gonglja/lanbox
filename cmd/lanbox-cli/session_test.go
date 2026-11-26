@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -24,11 +25,14 @@ func TestSessionRoundTripAndMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("会话文件不存在: %v", err)
 	}
-	if st.Mode().Perm() != 0o600 {
-		t.Fatalf("会话文件权限应为 0600，得到 %o", st.Mode().Perm())
-	}
-	if dirSt, err := os.Stat(filepath.Dir(path)); err != nil || dirSt.Mode().Perm() != 0o700 {
-		t.Fatalf("配置目录权限应为 0700: %v", err)
+	// Windows 没有 Unix 权限位（Go 报 0666），文件/目录收紧只在类 Unix 平台断言。
+	if runtime.GOOS != "windows" {
+		if st.Mode().Perm() != 0o600 {
+			t.Fatalf("会话文件权限应为 0600，得到 %o", st.Mode().Perm())
+		}
+		if dirSt, err := os.Stat(filepath.Dir(path)); err != nil || dirSt.Mode().Perm() != 0o700 {
+			t.Fatalf("配置目录权限应为 0700: %v", err)
+		}
 	}
 
 	got, err := loadSession()
@@ -78,6 +82,9 @@ func TestHTTPClientInsecureAndCA(t *testing.T) {
 
 // TestSaveSessionTightensExistingDir 断言已存在的 0755 配置目录会被收紧为 0700。
 func TestSaveSessionTightensExistingDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows 没有 Unix 权限位，目录收紧不适用")
+	}
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	cfg := filepath.Join(dir, "lanbox")

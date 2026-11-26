@@ -1,11 +1,13 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
+// writeFile 写配置文件。路径按 JSON 字符串转义，Windows 的反斜杠才不会破坏 JSON。
 func writeFile(t *testing.T, p, body string) {
 	t.Helper()
 	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
@@ -13,10 +15,19 @@ func writeFile(t *testing.T, p, body string) {
 	}
 }
 
+// jsonPath 把文件路径转成可嵌入 JSON 字面量的形式。
+func jsonPath(p string) string {
+	raw, err := json.Marshal(p)
+	if err != nil {
+		panic(err)
+	}
+	return string(raw)
+}
+
 func TestWebOverrideBeatsFileAndEnv(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")
-	writeFile(t, cfgPath, `{"data_dir":"`+dir+`","max_text_bytes":100,"listen":":8443","mdns":{"hostname":"from-file"}}`)
+	writeFile(t, cfgPath, `{"data_dir":`+jsonPath(dir)+`,"max_text_bytes":100,"listen":":8443","mdns":{"hostname":"from-file"}}`)
 	t.Setenv("LANBOX_MAX_TEXT_BYTES", "200")
 
 	base, err := Baseline(cfgPath)
@@ -55,7 +66,7 @@ func TestWebConfigPathUsesBaselineDataDir(t *testing.T) {
 	dir := t.TempDir()
 	other := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")
-	writeFile(t, cfgPath, `{"data_dir":"`+dir+`"}`)
+	writeFile(t, cfgPath, `{"data_dir":`+jsonPath(dir)+`}`)
 
 	base, err := Baseline(cfgPath)
 	if err != nil {
