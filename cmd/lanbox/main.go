@@ -119,7 +119,7 @@ func printAccessURLs(info app.Info, logger *log.Logger) {
 		}
 	}
 	if portText == "" {
-		portText = "443"
+		portText = "10725"
 	}
 	addrSuffix := ":" + portText
 	if portText == "443" {

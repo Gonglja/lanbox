@@ -132,6 +132,10 @@ func New(opts Options) (*App, error) {
 			if a.mdns != nil {
 				a.mdns.Apply(next)
 			}
+			// 自动检查频率改了要立即生效，不等重启。
+			if a.update != nil && prev.Update.Check != next.Update.Check {
+				a.startUpdateChecks(next)
+			}
 			return nil
 		},
 		Restart: func() {

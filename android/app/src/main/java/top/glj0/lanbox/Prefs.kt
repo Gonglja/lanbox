@@ -7,7 +7,7 @@ object Prefs {
     private const val NAME = "lanbox"
     private const val KEY_ENABLED = "server_enabled"
     private const val KEY_AUTOSTART = "autostart"
-    const val PORT = 8443
+    const val PORT = 10725
 
     private fun sp(c: Context) = c.getSharedPreferences(NAME, Context.MODE_PRIVATE)
 

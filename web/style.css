@@ -391,11 +391,13 @@ textarea::placeholder {
   color: var(--text-3);
 }
 input:hover,
-textarea:hover {
+textarea:hover,
+select:hover {
   border-color: color-mix(in oklch, var(--text-2) 40%, var(--edge));
 }
 input:focus,
-textarea:focus {
+textarea:focus,
+select:focus {
   outline: none;
   border-color: var(--text-2);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--text-2) 14%, transparent);
@@ -2134,7 +2136,8 @@ body.admin-open #btn-account {
   gap: 6px;
 }
 .settings-input input[type='text'],
-.settings-input input[type='number'] {
+.settings-input input[type='number'],
+.settings-input select {
   flex: 1 1 10rem;
   min-width: 8rem;
 }

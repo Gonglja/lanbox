@@ -17,11 +17,11 @@ import (
 
 // 手机上的强制配置：端口与数据目录由 App 决定，网页改不动。
 const (
-	appDataSubdir  = "lanbox"
-	minFreeDiskMB  = "512"
-	maxFileSizeMB  = "512"
-	defaultListen  = ":8443"
-	defaultMDNS    = "lanbox"
+	appDataSubdir = "lanbox"
+	minFreeDiskMB = "512"
+	maxFileSizeMB = "512"
+	defaultListen = ":10725"
+	defaultMDNS   = "lanbox"
 )
 
 var (
@@ -38,7 +38,7 @@ var (
 )
 
 // Configure 设置启动参数；每次 Start 前调用（App 侧在 Service 启动时调用）。
-// listen 形如 ":8443"；dataDir 是 App 私有目录；mdnsHostname 例如 "lanbox-a1b2"；
+// listen 形如 ":10725"；dataDir 是 App 私有目录；mdnsHostname 例如 "lanbox-a1b2"；
 // lanIP 是 Kotlin 读到的 WiFi IPv4（Android 上 Go 无法自己枚举网卡），可为空。
 func Configure(dataDir, listen, mdnsHostname, version, lanIP string) {
 	mu.Lock()
@@ -73,11 +73,11 @@ func Start() error {
 		Version: opts.version,
 		Log:     nil, // 只进环形缓冲，不写 stdout（Android 上没有终端）
 		Locked: map[string]string{
-			"listen":            opts.listen,
-			"data_dir":          dataDir,
-			"min_free_disk_mb":  minFreeDiskMB,
-			"max_file_size_mb":  maxFileSizeMB,
-			"mdns.hostname":     opts.hostname,
+			"listen":           opts.listen,
+			"data_dir":         dataDir,
+			"min_free_disk_mb": minFreeDiskMB,
+			"max_file_size_mb": maxFileSizeMB,
+			"mdns.hostname":    opts.hostname,
 		},
 		AllowLoopbackLogin: true,
 		OnRestart:          nil, // 手机不支持进程自重启

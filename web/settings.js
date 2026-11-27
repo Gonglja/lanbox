@@ -17,7 +17,7 @@ const GROUPS = [
   {
     title: '网络与证书',
     fields: [
-      { key: 'listen', label: '监听地址', type: 'text', hint: '如 :443 或 192.168.1.9:443（改后需重启）' },
+      { key: 'listen', label: '监听地址', type: 'text', hint: '如 :10725 或 192.168.1.9:10725（改后需重启）' },
       { key: 'tls.cert_file', label: '证书文件', type: 'text', hint: '留空则用自签证书' },
       { key: 'tls.key_file', label: '私钥文件', type: 'text', hint: '与证书同时留空或同时填写' },
       { key: 'data_dir', label: '数据目录', type: 'text' },
@@ -33,8 +33,13 @@ const GROUPS = [
       {
         key: 'update.check',
         label: '自动检查',
-        type: 'text',
-        hint: 'off / startup / daily，默认 daily；只提示，不会自动升级',
+        type: 'select',
+        options: [
+          { value: 'off', label: '关闭' },
+          { value: 'startup', label: '仅启动时检查' },
+          { value: 'daily', label: '每天检查' },
+        ],
+        hint: '只提示，不会自动升级；默认关闭',
       },
       {
         key: 'update.url',
@@ -103,6 +108,15 @@ function rowFor(field) {
     input = document.createElement('input');
     input.type = 'checkbox';
     input.checked = Boolean(getValue(current.values, field.key));
+  } else if (field.type === 'select') {
+    input = document.createElement('select');
+    for (const opt of field.options || []) {
+      const o = document.createElement('option');
+      o.value = opt.value;
+      o.textContent = opt.label || opt.value;
+      input.append(o);
+    }
+    input.value = getValue(current.values, field.key) ?? '';
   } else {
     input = document.createElement('input');
     input.type = field.type === 'text' ? 'text' : 'number';
@@ -112,10 +126,11 @@ function rowFor(field) {
   }
   input.id = 'cfg-' + field.key.replace(/\./g, '-');
   input.dataset.key = field.key;
-  input.dataset.kind = field.type === 'bool' ? 'bool' : field.type === 'text' ? 'text' : 'number';
+  input.dataset.kind =
+    field.type === 'bool' ? 'bool' : field.type === 'number' ? 'number' : 'text';
   label.htmlFor = input.id;
 
-  if (origin === 'web' && field.type !== 'bool') {
+  if (origin === 'web' && field.type !== 'bool' && field.type !== 'select') {
     const baseValue = getValue(current.baseline, field.key);
     if (baseValue !== undefined && baseValue !== '') input.placeholder = `恢复默认：${baseValue}`;
   }
@@ -182,7 +197,7 @@ export async function showSettings() {
 
 function collect() {
   const desired = JSON.parse(JSON.stringify(current.values));
-  for (const input of $('settings-groups').querySelectorAll('input[data-key]')) {
+  for (const input of $('settings-groups').querySelectorAll('[data-key]')) {
     const kind = input.dataset.kind;
     let value;
     if (kind === 'bool') value = input.checked;

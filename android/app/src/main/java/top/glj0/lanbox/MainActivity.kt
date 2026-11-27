@@ -39,7 +39,7 @@ import java.io.File
 import java.security.MessageDigest
 
 /**
- * 首页就是 lanbox 的 Web UI：打开 App 自动拉起服务，加载 127.0.0.1:8443。
+ * 首页就是 lanbox 的 Web UI：打开 App 自动拉起服务，加载 127.0.0.1:10725。
  *
  * 控制台（服务开关 / 地址 / 日志 / 设置项）挪到了 [SettingsActivity]，右下角齿轮进入。
  */

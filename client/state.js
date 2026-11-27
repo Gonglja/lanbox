@@ -4,6 +4,7 @@ import { apiBase, setToken } from '../web/env.js';
 
 export const SERVER_KEY = 'lanbox.client.server';
 export const TOKEN_KEY = 'lanbox.client.token';
+export const DEFAULT_PORT = '10725';
 
 const $ = (id) => document.getElementById(id);
 
@@ -30,14 +31,14 @@ export const storage = {
 // 但不接受路径/参数（客户端只对着服务根地址工作）。返回 { origin } 或 { error }。
 export function normalizeServer(input) {
   const raw = String(input || '').trim();
-  if (!raw) return { error: '请填写服务器地址，例如 https://192.168.1.9' };
+  if (!raw) return { error: '请填写服务器地址，例如 https://192.168.1.9:10725' };
   let text = raw;
   if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) text = 'https://' + text;
   let url;
   try {
     url = new URL(text);
   } catch {
-    return { error: '地址格式不正确，例如 https://192.168.1.9 或 https://192.168.1.9:8443' };
+    return { error: '地址格式不正确，例如 https://192.168.1.9 或 https://192.168.1.9:10725' };
   }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') {
     return { error: '只支持 https:// 或 http:// 地址' };
@@ -45,6 +46,8 @@ export function normalizeServer(input) {
   if ((url.pathname && url.pathname !== '/') || url.search || url.hash) {
     return { error: '只填服务器地址，不要带路径或参数' };
   }
+  // 服务端默认监听 10725；省略端口时按默认端口连接。
+  if (url.protocol === 'https:' && !url.port) url.port = DEFAULT_PORT;
   return { origin: url.origin };
 }
 

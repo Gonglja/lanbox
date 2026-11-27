@@ -9,6 +9,7 @@ import { api } from '../web/api.js';
 import { apiBase, setToken } from '../web/env.js';
 import { confirmDialog, openPanel } from '../web/ui.js';
 import {
+  DEFAULT_PORT,
   TOKEN_KEY,
   applyConnection,
   hostOf,
@@ -146,7 +147,7 @@ export async function probeServer(origin) {
 }
 
 // lanCandidates 生成探测候选：服务端 mDNS 的默认主机名 + 服务器簿里出现过的 .local 名，
-// 每个名字探它自己的端口（簿子里记过的）以及 443 / 8443 两个默认端口。
+// 每个名字探它自己的端口（簿子里记过的）以及默认端口 10725。
 // 改过 mdns.hostname 或用了非默认端口时，靠簿子里的记录仍能命中。
 function lanCandidates() {
   const targets = new Map(); // host -> Set<port>
@@ -154,17 +155,15 @@ function lanCandidates() {
     const h = String(host || '').toLowerCase();
     if (!h) return;
     if (!targets.has(h)) targets.set(h, new Set());
-    targets.get(h).add(String(port || '443'));
+    targets.get(h).add(String(port || DEFAULT_PORT));
   };
-  add('lanbox.local', '443');
-  add('lanbox.local', '8443');
+  add('lanbox.local', DEFAULT_PORT);
   for (const item of loadServerBook()) {
     try {
       const u = new URL(item.url);
       if (u.hostname.endsWith('.local')) {
-        add(u.hostname, u.port || '443');
-        add(u.hostname, '443');
-        add(u.hostname, '8443');
+        add(u.hostname, u.port || DEFAULT_PORT);
+        add(u.hostname, DEFAULT_PORT);
       }
     } catch {
       /* 忽略坏数据 */

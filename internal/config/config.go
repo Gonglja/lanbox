@@ -56,7 +56,7 @@ type Config struct {
 // Defaults 返回可直接使用的默认配置。
 func Defaults() Config {
 	c := Config{
-		Listen:          ":443",
+		Listen:          ":10725",
 		DataDir:         "./data",
 		MaxFileSizeMB:   1024,
 		MaxItemSizeMB:   2048,
@@ -65,7 +65,7 @@ func Defaults() Config {
 		MaxTextBytes:    65536,
 		SessionTTLHours: 168,
 		MDNS:            MDNS{Enabled: true, Hostname: "lanbox"},
-		Update:          Update{Check: "daily"},
+		Update:          Update{Check: "off"},
 	}
 	c.Origins = defaultOrigins()
 	return c
@@ -262,7 +262,7 @@ func parseBool(v string) (bool, error) {
 // Validate 校验配置自洽性，返回面向使用者的中文错误。
 func (c Config) Validate() error {
 	if c.Listen == "" {
-		return errors.New("listen 不能为空，例如 \":443\"")
+		return errors.New("listen 不能为空，例如 \":10725\"")
 	}
 	if c.DataDir == "" {
 		return errors.New("data_dir 不能为空")
@@ -335,15 +335,15 @@ func validateLabel(s, field string) error {
 	return nil
 }
 
-// ListenPort 从 listen 取端口，解析失败回落 443。
+// ListenPort 从 listen 取端口，解析失败回落 10725。
 func (c Config) ListenPort() int {
 	_, port, err := net.SplitHostPort(c.Listen)
 	if err != nil {
-		return 443
+		return 10725
 	}
 	n, err := strconv.Atoi(port)
 	if err != nil || n <= 0 || n > 65535 {
-		return 443
+		return 10725
 	}
 	return n
 }

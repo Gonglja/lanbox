@@ -169,7 +169,7 @@ func printAndCode(err error, stderr io.Writer) int {
 func (g *globals) globalFS(name string, out io.Writer) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(out)
-	fs.StringVar(&g.server, "s", g.server, "服务地址，如 https://192.168.1.9（默认 443 端口）")
+	fs.StringVar(&g.server, "s", g.server, "服务地址，如 https://192.168.1.9:10725")
 	fs.BoolVar(&g.json, "json", g.json, "输出机器可读 JSON")
 	fs.BoolVar(&g.insecure, "insecure", g.insecure, "跳过 TLS 证书校验（不安全）")
 	fs.StringVar(&g.caFile, "ca", g.caFile, "信任指定的 PEM 证书文件")
@@ -217,8 +217,20 @@ func resolveServer(g *globals, sess *client.Session, allowDiscover bool) (string
 		explicit = strings.TrimRight(os.Getenv("LANBOX_URL"), "/")
 	}
 	if explicit != "" {
-		if sess != nil && sess.URL != "" && explicit != strings.TrimRight(sess.URL, "/") {
-			return "", fmt.Errorf("%w: 会话属于 %s，请先运行 lanbox-cli login -s %s", errAuth, sess.URL, explicit)
+		// 省略端口时统一补成默认端口，便于和已保存的会话地址比较。
+		normalized, err := client.NormalizeBaseURL(explicit)
+		if err != nil {
+			return "", err
+		}
+		explicit = normalized
+		if sess != nil && sess.URL != "" {
+			sessURL, serr := client.NormalizeBaseURL(sess.URL)
+			if serr != nil {
+				sessURL = sess.URL
+			}
+			if explicit != strings.TrimRight(sessURL, "/") {
+				return "", fmt.Errorf("%w: 会话属于 %s，请先运行 lanbox-cli login -s %s", errAuth, sess.URL, explicit)
+			}
 		}
 		return explicit, nil
 	}

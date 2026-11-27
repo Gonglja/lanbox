@@ -334,7 +334,7 @@
             android:layout_marginTop="16dp"
             android:gravity="center"
             android:lineSpacingExtra="2dp"
-            android:text="固定端口 8443（443 需要 root，普通应用绑不上）"
+            android:text="固定端口 10725（443 需要 root，普通应用绑不上）"
             android:textColor="@color/text_dim"
             android:textSize="11sp" />
     </LinearLayout>

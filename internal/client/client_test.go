@@ -174,6 +174,22 @@ func TestClientRejectsBadBaseURL(t *testing.T) {
 	}
 }
 
+func TestClientDefaultsTo10725(t *testing.T) {
+	c, err := client.New(client.Options{BaseURL: "https://example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.BaseURL(); got != "https://example.com:10725" {
+		t.Fatalf("省略端口时应补 10725，得到 %s", got)
+	}
+	if got, err := client.NormalizeBaseURL("https://example.com/"); err != nil || got != "https://example.com:10725" {
+		t.Fatalf("NormalizeBaseURL 结果不对: %q, %v", got, err)
+	}
+	if got, err := client.NormalizeBaseURL("http://example.com:8080"); err != nil || got != "http://example.com:8080" {
+		t.Fatalf("显式端口不该被改写: %q, %v", got, err)
+	}
+}
+
 func TestListTodoFilter(t *testing.T) {
 	e := newTestEnv(t)
 	c := loginClient(t, e)

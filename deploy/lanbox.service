@@ -8,9 +8,10 @@ Type=simple
 # 建议专用低权限用户；数据目录与二进制需对该用户可读可执行
 User=lanbox
 Group=lanbox
-# 443 是特权端口（<1024），给二进制单独授予绑定能力，无需 root
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+# 默认端口 10725 不是特权端口，无需额外能力；
+# 只有把 listen 改回 443 等低端口时才需要下面两行。
+#AmbientCapabilities=CAP_NET_BIND_SERVICE
+#CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 WorkingDirectory=/opt/lanbox
 ExecStart=/opt/lanbox/lanbox -config /etc/lanbox/config.json
 Restart=always

@@ -432,7 +432,7 @@ function fillSettings(s) {
   $('set-autostart').checked = !!a.autostart;
   $('set-close-tray').checked = a.close_to_tray !== false;
   $('set-remember').checked = a.remember_password !== false;
-  $('set-check-update').checked = a.check_update !== false;
+  $('set-check-update').checked = a.check_update === true;
 }
 
 function collectSettings() {

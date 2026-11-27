@@ -42,6 +42,10 @@ func normalizeURL(raw string) (string, error) {
 	if u.Scheme != "https" && u.Scheme != "http" {
 		return "", fmt.Errorf("服务器地址必须以 http:// 或 https:// 开头")
 	}
+	// 服务端默认监听 10725；省略端口时按默认端口连接。
+	if u.Scheme == "https" && u.Port() == "" {
+		u.Host = net.JoinHostPort(u.Hostname(), "10725")
+	}
 	return strings.TrimRight(u.String(), "/"), nil
 }
 

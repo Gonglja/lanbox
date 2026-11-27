@@ -22,8 +22,8 @@ func TestSettingsDefaultsAndRoundTrip(t *testing.T) {
 	if !s.App.CloseToTray || s.App.HistorySize != 50 {
 		t.Fatalf("默认应用配置不符合预期: %+v", s.App)
 	}
-	if !s.App.CheckUpdate {
-		t.Fatal("默认应该开启静默检查更新")
+	if s.App.CheckUpdate {
+		t.Fatal("默认应该关闭静默检查更新")
 	}
 
 	s.Clipboard.TextPrefix = "📋 PC"

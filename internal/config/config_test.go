@@ -14,7 +14,7 @@ func TestDefaultsWhenFileMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("缺失文件不应报错: %v", err)
 	}
-	if c.Listen != ":443" || c.DataDir != "./data" {
+	if c.Listen != ":10725" || c.DataDir != "./data" {
 		t.Fatalf("默认监听/目录不对: %+v", c)
 	}
 	if c.MaxFileBytes() != 1024<<20 {
@@ -214,9 +214,9 @@ func TestListenPort(t *testing.T) {
 		":443":         443,
 		":8443":        8443,
 		"0.0.0.0:9443": 9443,
-		"":             443,
-		"bad":          443,
-		":notaport":    443,
+		"":             10725,
+		"bad":          10725,
+		":notaport":    10725,
 	}
 	for in, want := range cases {
 		c := Defaults()
@@ -234,7 +234,7 @@ func TestUpdateDefaultsAndEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("加载失败: %v", err)
 	}
-	if c.Update.Check != "daily" || c.Update.URL != "" || c.Update.Token != "" {
+	if c.Update.Check != "off" || c.Update.URL != "" || c.Update.Token != "" {
 		t.Fatalf("更新配置默认值不对: %+v", c.Update)
 	}
 	if c.Origins["update.check"] != "default" || c.Origins["update.url"] != "default" {

@@ -17,8 +17,8 @@ import (
 
 func TestNormalizeURL(t *testing.T) {
 	cases := []struct{ in, want, err string }{
-		{"lanbox.local", "https://lanbox.local", ""},
-		{"https://192.168.1.9/", "https://192.168.1.9", ""},
+		{"lanbox.local", "https://lanbox.local:10725", ""},
+		{"https://192.168.1.9/", "https://192.168.1.9:10725", ""},
 		{"http://host:8080", "http://host:8080", ""},
 		{"", "", "不能为空"},
 		{"ftp://host", "", "http://"},

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -27,14 +28,39 @@ type Client struct {
 	httpc *http.Client
 }
 
-// New 校验地址并构造客户端。
-func New(o Options) (*Client, error) {
-	base, err := url.Parse(strings.TrimRight(o.BaseURL, "/"))
+// defaultHTTPSPort 是服务端默认监听端口。
+const defaultHTTPSPort = "10725"
+
+// parseBaseURL 校验并规范化服务地址：补齐协议默认端口、去掉尾部斜杠。
+func parseBaseURL(raw string) (*url.URL, error) {
+	base, err := url.Parse(strings.TrimRight(raw, "/"))
 	if err != nil || base.Scheme == "" || base.Host == "" {
-		return nil, fmt.Errorf("服务器地址无效: %q", o.BaseURL)
+		return nil, fmt.Errorf("服务器地址无效: %q", raw)
 	}
 	if base.Scheme != "https" && base.Scheme != "http" {
-		return nil, fmt.Errorf("服务器地址必须以 http:// 或 https:// 开头: %q", o.BaseURL)
+		return nil, fmt.Errorf("服务器地址必须以 http:// 或 https:// 开头: %q", raw)
+	}
+	// 服务端默认监听 10725；用户省略端口时按默认端口连接。
+	if base.Scheme == "https" && base.Port() == "" {
+		base.Host = net.JoinHostPort(base.Hostname(), defaultHTTPSPort)
+	}
+	return base, nil
+}
+
+// NormalizeBaseURL 返回规范化后的服务地址（省略端口时补 10725）。
+func NormalizeBaseURL(raw string) (string, error) {
+	base, err := parseBaseURL(raw)
+	if err != nil {
+		return "", err
+	}
+	return base.String(), nil
+}
+
+// New 校验地址并构造客户端。
+func New(o Options) (*Client, error) {
+	base, err := parseBaseURL(o.BaseURL)
+	if err != nil {
+		return nil, err
 	}
 	if o.HTTP == nil {
 		o.HTTP = http.DefaultClient
@@ -95,6 +121,11 @@ func Login(ctx context.Context, baseURL, username, password string, httpc *http.
 	if httpc == nil {
 		httpc = http.DefaultClient
 	}
+	base, err := parseBaseURL(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	baseURL = base.String()
 	body, err := json.Marshal(map[string]string{"username": username, "password": password})
 	if err != nil {
 		return nil, err

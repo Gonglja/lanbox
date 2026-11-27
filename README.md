@@ -18,7 +18,7 @@
 - 另有**纯 web 客户端**（`client/`，可打成单文件 HTML）：任意浏览器填「服务器地址 + 账号」即可收发，视觉与服务端网页一致，零安装、零构建
 - **手机扫码即连**：服务端 Web UI 侧栏「扫码连接」与状态页都能出连接二维码（服务端自写 QR 编码器，零依赖），手机相机扫一下就能打开
 - **局域网发现**：客户端可探测 `.local` 名称（走系统 mDNS 解析），连上一台后还能让服务端列出网内所有实例
-- **在线更新**：服务端与 Windows 客户端都能查新版本、一键升级（SHA256 + 魔数双重校验、旧版本留作 `.old`）并按需回滚；静默检查只提示，升级永远需要人点
+- **在线更新**：服务端与 Windows 客户端都能查新版本、一键升级（SHA256 + 魔数双重校验、旧版本留作 `.old`）并按需回滚；静默检查默认关闭、可在设置里开启，升级永远需要人点
 
 ## 快速开始
 
@@ -26,11 +26,11 @@
 # 1. 编译本机架构（需要 Go 1.25+，仅标准库）
 make build          # 等价于 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=..." -o lanbox ./cmd/lanbox
 
-# 2. 直接运行（默认监听 :443，数据在 ./data；绑定 443 需 root 或 setcap）
+# 2. 直接运行（默认监听 :10725，数据在 ./data；10725 无需 root）
 ./lanbox
 
 # 3. 首次启动会打印 admin 的随机密码，请立即保存
-#    然后浏览器打开 https://<小主机IP>
+#    然后浏览器打开 https://<小主机IP>:10725
 ```
 
 ## 命令行客户端 lanbox-cli
@@ -70,7 +70,7 @@ lanbox-cli logout
 
 - 退出码：`0` 成功、`1` 一般错误、`2` 用法错误、`3` 网络/证书错误、`4` 认证或会话问题。
 - 会话保存在 `~/.config/lanbox/session.json`（0600，可用 `XDG_CONFIG_HOME` 改位置；Windows 上是 `%AppData%\lanbox\session.json`）。**会话不保存 TLS 选项**，所以每条命令都要重复 `-ca`/`-insecure`；也可以把 `data/tls/cert.pem` 导入系统信任库，之后就不必再传。
-- 全局选项可写在子命令前后：`lanbox-cli -s https://host ls` 等价于 `lanbox-cli ls -s https://host`（非默认端口写 `https://host:8443`）。
+- 全局选项可写在子命令前后：`lanbox-cli -s https://host ls` 等价于 `lanbox-cli ls -s https://host`（省略端口时默认用 10725）。
 
 ## Windows 客户端 lanbox-agent
 
@@ -135,7 +135,7 @@ make client        # 产出 dist/lanbox-client.html（单文件，约 180KB）
 - **开发期**：在仓库根目录 `python3 -m http.server`，打开 `/client/` 即可（直接复用 `web/` 的模块）
 - 首次连接自签证书的服务器：先在新标签页直接打开 `https://<服务器地址>`，选择「继续访问」，
   再回到客户端登录（浏览器不会为跨域请求单独放行未信任的证书）
-- 地址栏可省略协议：`192.168.1.9` 会补成 `https://192.168.1.9`；非默认端口写 `host:8443`
+- 地址栏可省略协议与默认端口：`192.168.1.9` 会补成 `https://192.168.1.9:10725`
 - 服务器地址、令牌、用户名存在 `localStorage`（`lanbox.client.*`），下次打开自动续连
 - **服务器簿**：连过的服务器记在 `lanbox.client.servers`（最多 12 条，最近使用优先），连接页下方点一下就填地址
 - 顶栏徽标点开是「服务器与局域网」面板：「发现其他实例」（服务端真 mDNS 浏览）、「断开并切换」；二维码只在服务端 Web UI 展示，客户端不重复画
@@ -145,9 +145,9 @@ make client        # 产出 dist/lanbox-client.html（单文件，约 180KB）
 | 方式 | 说明 |
 |---|---|
 | **扫码添加** | 服务端 Web UI 侧栏「扫码连接」（或「状态」页的「手机扫码连接」卡片）里有二维码。客户端扫码（Android Chrome 等支持 `BarcodeDetector`；桌面 Chrome 与 iOS Safari 没有，会退回粘贴地址），扫到后自动探测 `/api/healthz` 并记进服务器簿 |
-| **发现局域网** | 浏览器拿不到原始组播，只能请系统解析器解析 `.local`：客户端会探测 `https://lanbox.local` 与 `https://lanbox.local:8443`（外加服务器簿里出现过的 `.local` 名）。macOS/iOS/Android/Linux 原生支持，Windows 视版本 |
+| **发现局域网** | 浏览器拿不到原始组播，只能请系统解析器解析 `.local`：客户端会探测 `https://lanbox.local:10725` 以及服务器簿里出现过的 `.local` 名与端口。macOS/iOS/Android/Linux 原生支持，Windows 视版本 |
 | **发现其他实例** | 已连上一台时点顶栏徽标 →「发现其他实例」，由**服务端**做真正的 mDNS 浏览（同 `lanbox-cli discover`），列出全网的实例、地址与证书指纹 |
-| **手动** | 地址栏直接填 `host` / `host:8443`，协议可省略 |
+| **手动** | 地址栏直接填 `host` / `host:10725`，协议可省略 |
 
 ### 跨域与令牌
 
@@ -169,9 +169,9 @@ Bearer 令牌通道：
 一个 APK 里既有服务端也有客户端：手机既当共享盘，也能自己收发。**打开 App 首页就是 lanbox 页面**，
 控制台收在右下角齿轮里。
 
-- 打开 App 自动拉起服务（前台 Service + 常驻通知），首页 WebView 直连 `https://127.0.0.1:8443`
+- 打开 App 自动拉起服务（前台 Service + 常驻通知），首页 WebView 直连 `https://127.0.0.1:10725`
 - WebView 只对回环地址放行，且必须与本机证书指纹一致；登录用一次性回环令牌免密换会话，用户全程不见密码
-- 其它设备（PC / 平板 / 另一台手机）用浏览器访问 `https://<手机IP>:8443`，首次需信任自签证书
+- 其它设备（PC / 平板 / 另一台手机）用浏览器访问 `https://<手机IP>:10725`，首次需信任自签证书
 - 右下角齿轮进「设置」：服务开关、访问地址（可复制）、开机自启、电池优化白名单、运行日志、清空数据
 
 **构建**（前置：JDK 17–21、Android SDK platform 35、NDK 27；不需要 gomobile）
@@ -190,7 +190,7 @@ make android-env        # 只检查前置，缺什么报什么
 
 | 项 | 取值 | 说明 |
 |---|---|---|
-| 端口 | **固定 8443** | 443 需要 root，普通应用绑不上；所以手机端不会用 443 |
+| 端口 | **固定 10725** | 443 需要 root，普通应用绑不上；所以手机端不会用 443 |
 | 数据目录 | `Android/data/top.glj0.lanbox/files/lanbox` | 应用私有，卸载即清；网页可改的配置写在这里 |
 | 固定字段 | `listen` / `data_dir` / `tls.*` / `min_free_disk_mb=512` / `max_file_size_mb=512` | 网页改这些会返回「字段由 App 固定」 |
 | mDNS 名 | `lanbox-<androidId 后 4 位>` | 同一局域网多台手机不撞名 |
@@ -294,7 +294,7 @@ CI 跑 `go vet` + `go test`（gofmt 只打告警不阻塞）→ `make dist`（Li
 
 ## 在线更新
 
-服务端与 Windows 客户端都内置更新器（`internal/updater`，纯标准库）。**默认只检查、只提示，升级动作必须由人触发**：
+服务端与 Windows 客户端都内置更新器（`internal/updater`，纯标准库）。**静默检查默认关闭，可在设置里开启；即使开启也只提示，升级动作必须由人触发**：
 
 | 入口 | 行为 |
 |---|---|
@@ -375,7 +375,7 @@ base64 -w0 android/lanbox-release.jks > keystore.b64
 
 ```json
 {
-  "listen": ":443",
+  "listen": ":10725",
   "data_dir": "./data",
   "tls": { "cert_file": "", "key_file": "" },
   "max_file_size_mb": 1024,
@@ -385,13 +385,13 @@ base64 -w0 android/lanbox-release.jks > keystore.b64
   "max_text_bytes": 65536,
   "session_ttl_hours": 168,
   "mdns": { "enabled": true, "hostname": "lanbox", "instance": "" },
-  "update": { "check": "daily", "url": "" }
+  "update": { "check": "off", "url": "" }
 }
 ```
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| `listen` | `:443` | 监听地址。只对某一网卡开放可写 `192.168.1.9:443`。443 属特权端口，非 root 运行需 `setcap cap_net_bind_service=+ep ./lanbox`（systemd 用 `AmbientCapabilities`）；网页「设置」里改此项后需重启生效 |
+| `listen` | `:10725` | 监听地址。只对某一网卡开放可写 `192.168.1.9:10725`。10725 不是特权端口，普通用户即可绑定；回到 443 等低端口时非 root 运行需 `setcap cap_net_bind_service=+ep ./lanbox`（systemd 用 `AmbientCapabilities`）；网页「设置」里改此项后需重启生效 |
 | `data_dir` | `./data` | 数据目录（内容、用户库、证书） |
 | `tls.cert_file` / `tls.key_file` | 空 | 同时填写则使用你自己的证书；留空则自动生成自签证书 |
 | `max_file_size_mb` | 1024 | 单文件上限；实际生效的是 `min(单文件上限, 单条剩余额度)`，超过单条额度返回 `item_too_large`(413) |
@@ -403,7 +403,7 @@ base64 -w0 android/lanbox-release.jks > keystore.b64
 | `mdns.enabled` | `true` | 是否在局域网内以 mDNS 通告 |
 | `mdns.hostname` | `lanbox` | 通告为 `https://<hostname>.local:<端口>` |
 | `mdns.instance` | 空（同 hostname） | 服务实例名（`_lanbox._tcp` 的 PTR 名称） |
-| `update.check` | `daily` | 后台检查更新频率：`off` / `startup`（只启动时查一次）/ `daily`（启动 + 每天）；只提示，不会自动升级 |
+| `update.check` | `off` | 后台检查更新频率：`off`（默认关闭）/ `startup`（只启动时查一次）/ `daily`（启动 + 每天）；只提示，不会自动升级 |
 | `update.url` | 空 | 更新源。留空用 GitHub Release；以 `.json` 结尾则读取该清单；其它值当作 Release 基地址（自建 Gitea / 镜像） |
 
 也可用环境变量覆盖：`LANBOX_LISTEN`、`LANBOX_DATA_DIR`、`LANBOX_TLS_CERT_FILE`、`LANBOX_TLS_KEY_FILE`、`LANBOX_MAX_FILE_SIZE_MB`、`LANBOX_MAX_ITEM_SIZE_MB`、`LANBOX_MIN_FREE_DISK_MB`、`LANBOX_MAX_FILES_PER_ITEM`、`LANBOX_MAX_TEXT_BYTES`、`LANBOX_SESSION_TTL_HOURS`、`LANBOX_MDNS_ENABLED`、`LANBOX_MDNS_HOSTNAME`、`LANBOX_MDNS_INSTANCE`、`LANBOX_UPDATE_CHECK`、`LANBOX_UPDATE_URL`。
@@ -497,7 +497,7 @@ sudo chown -R lanbox:lanbox /opt/lanbox /var/lib/lanbox
 
 sudo tee /etc/lanbox/config.json >/dev/null <<'EOF'
 {
-  "listen": ":443",
+  "listen": ":10725",
   "data_dir": "/var/lib/lanbox"
 }
 EOF
@@ -601,7 +601,7 @@ node --check client/app.js         # 语法校验（web/*.js 同样适用）
 35. 纯 web 客户端：`make client` 后双击 `dist/lanbox-client.html` → 显示连接页；填服务器地址与账号 → 进入时间线（主题、Markdown、图片/视频预览与服务端一致）
 36. 客户端里发布文字/文件 → 服务端网页 1 秒内出现（SSE 走 `?token=`）；反过来也实时出现
 37. 客户端里点附件下载与「下载全部 (.zip)」→ 文件正确保存；点顶栏徽标 → 断开并回到连接页，token 从 `localStorage` 消失
-38. 客户端不显示「状态」与「管理」入口；把地址写成 `192.168.1.9:8443`（省略协议）同样能连上
+38. 客户端不显示「状态」与「管理」入口；把地址写成 `192.168.1.9:10725`（省略协议）同样能连上
 39. 服务端网页侧栏「扫码连接」在任意页面都能打开二维码对话框；状态页「手机扫码连接」卡片同样有二维码；用手机相机扫，能打开同一服务端的登录页（自签证书需选择继续访问）
 40. 状态页（或扫码对话框）地址下拉切换（mDNS 名 / 网卡地址）→ 二维码与 `…/api/connect/qr.svg` 内容同步变化
 41. 客户端点「发现局域网」→ 命中 `lanbox.local` 并自动填入地址（找不到时给出提示，不报错）
